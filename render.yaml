@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: phoenixgymturnos-api
+    env: node
+    rootDir: server-firestore
+    buildCommand: npm ci
+    startCommand: node index.js
+    autoDeploy: true
+    plan: free
+    envVars:
+      - key: NODE_VERSION
+        value: 18
+      - key: JWT_SECRET
+        generateValue: true
+      # GOOGLE_APPLICATION_CREDENTIALS_JSON debe configurarse en Dashboard con el JSON del service account
+
+  - type: web
+    name: phoenixgymturnos-web
+    env: static
+    buildCommand: npm --prefix web ci && npm --prefix web run build
+    staticPublishPath: web/dist
+    envVars:
+      - key: VITE_API_BASE
+        fromService:
+          name: phoenixgymturnos-api
+          type: web
+          property: url

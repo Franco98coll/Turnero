@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vibe Turnos</title>
+    <link href="https://cdn.jsdelivr.net/npm/vuetify@2.7.1/dist/vuetify.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Icons" rel="stylesheet">
+    <style>
+        html,
+        body,
+        #app {
+            height: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <v-app>
+            <v-app-bar app color="primary" dark>
+                <v-toolbar-title>Vibe Turnos</v-toolbar-title>
+                <v-spacer></v-spacer>
+                <div v-if="user">
+                    <v-btn text @click="view='slots'">Turnos</v-btn>
+                    <v-btn text @click="view='bookings'">Mis reservas</v-btn>
+                    <v-btn text v-if="user.role==='admin'" @click="view='admin'">Admin</v-btn>
+                    <v-btn text @click="logout">Salir</v-btn>
+                </div>
+            </v-app-bar>
+            <v-main>
+                <v-container>
+                    <div v-if="!user">
+                        <v-card class="mx-auto" max-width="420">
+                            <v-card-title>Ingreso</v-card-title>
+                            <v-card-text>
+                                <v-text-field label="Email" v-model="login.email"></v-text-field>
+                                <v-text-field label="Contraseña" type="password"
+                                    v-model="login.password"></v-text-field>
+                            </v-card-text>
+                            <v-card-actions>
+                                <v-spacer></v-spacer>
+                                <v-btn color="primary" @click="doLogin">Entrar</v-btn>
+                            </v-card-actions>
+                        </v-card>
+                    </div>
+
+                    <div v-else-if="view==='slots'">
+                        <v-row align="center">
+                            <v-col cols="12" md="4">
+                                <v-text-field label="Fecha (YYYY-MM-DD)" v-model="date"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="2">
+                                <v-btn color="primary" @click="loadSlots">Buscar</v-btn>
+                            </v-col>
+                        </v-row>
+                        <v-data-table :headers="slotHeaders" :items="slots" :items-per-page="10">
+                            <template v-slot:item.actions="{ item }">
+                                <v-btn small color="primary" :disabled="item.remaining<=0"
+                                    @click="book(item)">Reservar</v-btn>
+                            </template>
+                        </v-data-table>
+                    </div>
+
+                    <div v-else-if="view==='bookings'">
+                        <v-data-table :headers="bookingHeaders" :items="bookings" :items-per-page="10">
+                            <template v-slot:item.actions="{ item }">
+                                <v-btn small color="error" @click="cancelBooking(item)">Cancelar</v-btn>
+                            </template>
+                        </v-data-table>
+                    </div>
+
+                    <div v-else-if="view==='admin' && user.role==='admin'">
+                        <h3>Usuarios</h3>
+                        <v-row>
+                            <v-col cols="12" md="3"><v-text-field dense label="Nombre"
+                                    v-model="newUser.name"></v-text-field></v-col>
+                            <v-col cols="12" md="3"><v-text-field dense label="Email"
+                                    v-model="newUser.email"></v-text-field></v-col>
+                            <v-col cols="12" md="3"><v-text-field dense label="Password" type="password"
+                                    v-model="newUser.password"></v-text-field></v-col>
+                            <v-col cols="12" md="2"><v-select dense :items="['user','admin']" label="Rol"
+                                    v-model="newUser.role"></v-select></v-col>
+                            <v-col cols="12" md="1"><v-btn color="primary" @click="createUser">Crear</v-btn></v-col>
+                        </v-row>
+                        <v-data-table :headers="userHeaders" :items="users" :items-per-page="5"></v-data-table>
+
+                        <h3 class="mt-8">Configuración de Turnos</h3>
+                        <v-row>
+                            <v-col cols="12" md="4">
+                                <v-text-field dense type="datetime-local" label="Inicio" v-model="slotForm.start"
+                                    :max="slotForm.end || undefined"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="4">
+                                <v-text-field dense type="datetime-local" label="Fin" v-model="slotForm.end"
+                                    :min="slotForm.start || undefined"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="2"><v-text-field dense label="Cupo" type="number"
+                                    v-model.number="slotForm.capacity"></v-text-field></v-col>
+                            <v-col cols="12" md="2"><v-btn color="primary" @click="createSlot">Agregar</v-btn></v-col>
+                        </v-row>
+
+                        <h4 class="mt-8">Crear por agenda semanal</h4>
+                        <v-row>
+                            <v-col cols="12" md="3">
+                                <v-text-field dense type="date" label="Desde" v-model="bulk.start_date"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="3">
+                                <v-text-field dense type="date" label="Hasta" v-model="bulk.end_date"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="6">
+                                <v-select dense multiple chips label="Días de semana" :items="weekdayItems"
+                                    v-model="bulk.weekdays"></v-select>
+                            </v-col>
+                        </v-row>
+                        <v-row>
+                            <v-col cols="12" md="3">
+                                <v-text-field dense type="time" label="Hora inicio"
+                                    v-model="bulk.time_start"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="3">
+                                <v-text-field dense type="time" label="Hora fin" v-model="bulk.time_end"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="3">
+                                <v-text-field dense type="number" label="Duración (min)"
+                                    v-model.number="bulk.slot_minutes"></v-text-field>
+                            </v-col>
+                            <v-col cols="12" md="3">
+                                <v-text-field dense type="number" label="Cupo"
+                                    v-model.number="bulk.capacity"></v-text-field>
+                            </v-col>
+                        </v-row>
+                        <v-row>
+                            <v-col cols="12" class="d-flex justify-end">
+                                <v-btn color="primary" @click="createBulk">Crear turnos</v-btn>
+                            </v-col>
+                        </v-row>
+                        <v-data-table :headers="slotAdminHeaders" :items="slots" :items-per-page="10">
+                            <template v-slot:item.actions="{ item }">
+                                <v-btn icon small color="error" @click="deleteSlot(item)"><span
+                                        class="material-icons">delete</span></v-btn>
+                            </template>
+                        </v-data-table>
+                    </div>
+                </v-container>
+            </v-main>
+        </v-app>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.7.16/dist/vue.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vuetify@2.7.1/dist/vuetify.js"></script>
+    <script>
+        const api = {
+            base: (window.location && window.location.origin ? window.location.origin : '') + '/api',
+            token: localStorage.getItem('token') || '',
+            headers() { return this.token ? { Authorization: 'Bearer ' + this.token, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' }; },
+            async login(email, password) {
+                const r = await fetch(this.base + '/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+                if (!r.ok) throw new Error('Login failed');
+                return r.json();
+            },
+            async getUsers() { const r = await fetch(this.base + '/users', { headers: this.headers() }); return r.json(); },
+            async createUser(u) { const r = await fetch(this.base + '/users', { method: 'POST', headers: this.headers(), body: JSON.stringify(u) }); return r.json(); },
+            async getSlots(date) { const r = await fetch(this.base + '/slots' + (date ? `?date=${encodeURIComponent(date)}` : '')); return r.json(); },
+            async createSlot(s) { const r = await fetch(this.base + '/slots', { method: 'POST', headers: this.headers(), body: JSON.stringify({ start_time: s.start, end_time: s.end, capacity: s.capacity }) }); return r.json(); },
+            async deleteSlot(id) { const r = await fetch(this.base + '/slots/' + id, { method: 'DELETE', headers: this.headers() }); return r.json(); },
+            async getBookings() { const r = await fetch(this.base + '/bookings', { headers: this.headers() }); return r.json(); },
+            async createBooking(slot_id) { const r = await fetch(this.base + '/bookings', { method: 'POST', headers: this.headers(), body: JSON.stringify({ slot_id }) }); return r.json(); },
+            async cancelBooking(id) { const r = await fetch(this.base + '/bookings/' + id, { method: 'DELETE', headers: this.headers() }); return r.json(); },
+        };
+
+        new Vue({
+            el: '#app',
+            vuetify: new Vuetify(),
+            data: () => ({
+                user: JSON.parse(localStorage.getItem('user') || 'null'),
+                view: 'slots',
+                login: { email: '', password: '' },
+                date: new Date().toISOString().slice(0, 10),
+                slots: [],
+                bookings: [],
+                users: [],
+                newUser: { name: '', email: '', password: '', role: 'user' },
+                slotForm: { start: '', end: '', capacity: 1 },
+                bulk: { start_date: '', end_date: '', weekdays: [1, 2, 3, 4, 5], time_start: '09:00', time_end: '18:00', slot_minutes: 30, capacity: 1 },
+                weekdayItems: [
+                    { text: 'Domingo', value: 0 },
+                    { text: 'Lunes', value: 1 },
+                    { text: 'Martes', value: 2 },
+                    { text: 'Miércoles', value: 3 },
+                    { text: 'Jueves', value: 4 },
+                    { text: 'Viernes', value: 5 },
+                    { text: 'Sábado', value: 6 },
+                ],
+                slotHeaders: [
+                    { text: 'Inicio', value: 'start_time' },
+                    { text: 'Fin', value: 'end_time' },
+                    { text: 'Cupo', value: 'capacity' },
+                    { text: 'Disponible', value: 'remaining' },
+                    { text: '', value: 'actions', sortable: false },
+                ],
+                slotAdminHeaders: [
+                    { text: 'Inicio', value: 'start_time' },
+                    { text: 'Fin', value: 'end_time' },
+                    { text: 'Cupo', value: 'capacity' },
+                    { text: 'Disponible', value: 'remaining' },
+                    { text: '', value: 'actions', sortable: false },
+                ],
+                userHeaders: [
+                    { text: 'ID', value: 'id' },
+                    { text: 'Nombre', value: 'name' },
+                    { text: 'Email', value: 'email' },
+                    { text: 'Rol', value: 'role' },
+                    { text: 'Creado', value: 'created_at' },
+                ],
+                bookingHeaders: [
+                    { text: 'Inicio', value: 'start_time' },
+                    { text: 'Fin', value: 'end_time' },
+                    { text: 'Estado', value: 'status' },
+                    { text: '', value: 'actions', sortable: false },
+                ],
+            }),
+            methods: {
+                async doLogin() {
+                    try {
+                        const res = await api.login(this.login.email, this.login.password);
+                        api.token = res.token;
+                        localStorage.setItem('token', res.token);
+                        localStorage.setItem('user', JSON.stringify(res.user));
+                        this.user = res.user;
+                        this.view = 'slots';
+                        this.loadSlots();
+                    } catch (e) { alert('Login inválido'); }
+                },
+                logout() { localStorage.clear(); this.user = null; this.view = 'slots'; },
+                async loadSlots() { this.slots = await api.getSlots(this.date); },
+                async book(item) { const r = await api.createBooking(item.id); if (r.error) return alert(r.error); this.loadSlots(); this.loadBookings(); },
+                async loadBookings() { if (!this.user) return; this.bookings = await api.getBookings(); },
+                async createUser() { const u = await api.createUser(this.newUser); if (u.error) return alert(u.error); this.newUser = { name: '', email: '', password: '', role: 'user' }; this.loadUsers(); },
+                async loadUsers() { if (!this.user || this.user.role !== 'admin') return; this.users = await api.getUsers(); },
+                async createSlot() { const s = await api.createSlot(this.slotForm); if (s.error) return alert(s.error); this.slotForm = { start: '', end: '', capacity: 1 }; this.loadSlots(); },
+                async createBulk() {
+                    try {
+                        const r = await fetch(api.base + '/slots/bulk', { method: 'POST', headers: api.headers(), body: JSON.stringify(this.bulk) });
+                        const data = await r.json();
+                        if (!r.ok) throw new Error(data.error || 'Error');
+                        alert(`Turnos creados: ${data.created}`);
+                        this.loadSlots();
+                    } catch (e) { alert(e.message); }
+                },
+                async deleteSlot(item) { await api.deleteSlot(item.id); this.loadSlots(); },
+            },
+            mounted() {
+                if (this.user) { this.loadSlots(); this.loadBookings(); this.loadUsers(); }
+            }
+        });
+    </script>
+</body>
+
+</html>
