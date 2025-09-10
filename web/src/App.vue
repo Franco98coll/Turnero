@@ -352,9 +352,11 @@ import { reactive, ref, onMounted } from "vue";
 declare const __API_BASE__: string | undefined;
 const api = {
   base:
-    (__API_BASE__ && __API_BASE__ !== "" ? __API_BASE__ :
-    (window.location && window.location.origin ? window.location.origin : "")) +
-    "/api",
+    (__API_BASE__ && __API_BASE__ !== ""
+      ? __API_BASE__
+      : window.location && window.location.origin
+      ? window.location.origin
+      : "") + "/api",
   token: localStorage.getItem("token") || "",
   headers() {
     return this.token

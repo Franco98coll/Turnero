@@ -1,10 +1,12 @@
 # Despliegue en Render
 
 Este setup usa:
+
 - API Node (Express) con Firestore: carpeta `server-firestore/`.
 - Frontend Vite estático: carpeta `web/`.
 
 ## Pasos
+
 1. Crea un Service Account en Google Cloud con rol "Firestore User" y descarga el JSON.
 2. En Render crea un Web Service:
    - Name: phoenixgymturnos-api
@@ -24,5 +26,6 @@ Este setup usa:
 4. (Opcional) Usa `render.yaml` para infra como código.
 
 ## Notas
+
 - El frontend reescribe las llamadas a `/api` hacia `VITE_API_BASE` si la variable está definida en build.
 - Asegúrate de tener un usuario admin en Firestore para login inicial.
