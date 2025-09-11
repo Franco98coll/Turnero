@@ -350,35 +350,6 @@
               fmtDateTime(item.end_time)
             }}</template>
           </v-data-table>
-
-          <v-dialog v-model="attDialog" max-width="600">
-            <v-card>
-              <v-card-title>
-                Inscriptos
-                <v-spacer></v-spacer>
-                <small v-if="attSlot"
-                  >{{ fmtDateTime(attSlot.start_time) }} · Capacidad
-                  {{ attSlot.capacity }}</small
-                >
-              </v-card-title>
-              <v-card-text>
-                <v-data-table
-                  :headers="attHeaders"
-                  :items="attendees"
-                  :items-per-page="10"
-                  dense
-                >
-                  <template v-slot:[`item.created_at`]="{ item }">{{
-                    fmtDateTime(item.created_at)
-                  }}</template>
-                </v-data-table>
-              </v-card-text>
-              <v-card-actions>
-                <v-spacer />
-                <v-btn text @click="attDialog = false">Cerrar</v-btn>
-              </v-card-actions>
-            </v-card>
-          </v-dialog>
         </div>
 
         <!-- Gestión de usuarios -->
@@ -461,6 +432,36 @@
             </v-card>
           </v-dialog>
         </div>
+
+        <!-- Diálogo de asistentes (global para Admin y Agenda Admin) -->
+        <v-dialog v-model="attDialog" max-width="600">
+          <v-card>
+            <v-card-title>
+              Inscriptos
+              <v-spacer></v-spacer>
+              <small v-if="attSlot"
+                >{{ fmtDateTime(attSlot.start_local || attSlot.start_time) }} ·
+                Capacidad {{ attSlot.capacity }}</small
+              >
+            </v-card-title>
+            <v-card-text>
+              <v-data-table
+                :headers="attHeaders"
+                :items="attendees"
+                :items-per-page="10"
+                dense
+              >
+                <template v-slot:[`item.created_at`]="{ item }">{{
+                  fmtDateTime(item.created_at)
+                }}</template>
+              </v-data-table>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer />
+              <v-btn text @click="attDialog = false">Cerrar</v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
       </v-container>
     </v-main>
 
