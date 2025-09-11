@@ -189,7 +189,19 @@ app.get("/api/slots", async (req, res) => {
           .where("status", "==", "confirmed")
           .get();
         const used = b.size;
-        return { ...s, remaining: (s.capacity || 0) - used };
+        const st = s.start_time?.toDate
+          ? s.start_time.toDate()
+          : new Date(s.start_time);
+        const et = s.end_time?.toDate
+          ? s.end_time.toDate()
+          : new Date(s.end_time);
+        return {
+          id: s.id,
+          capacity: s.capacity,
+          start_time: st.toISOString(),
+          end_time: et.toISOString(),
+          remaining: (s.capacity || 0) - used,
+        };
       })
     );
     res.json(slots);
@@ -349,16 +361,23 @@ app.get("/api/bookings", auth(), async (req, res) => {
     snap.docs.map(async (d) => {
       const b = { id: d.id, ...d.data() };
       const s = await db.collection(SLOTS).doc(b.slot_id).get();
+      const sd = s.data();
+      const st = sd.start_time?.toDate
+        ? sd.start_time.toDate()
+        : new Date(sd.start_time);
+      const et = sd.end_time?.toDate
+        ? sd.end_time.toDate()
+        : new Date(sd.end_time);
       return {
         ...b,
-        start_time: s.data().start_time,
-        end_time: s.data().end_time,
+        start_time: st.toISOString(),
+        end_time: et.toISOString(),
       };
     })
   );
   const now = new Date();
   res.json(
-    isAdmin ? bookings : bookings.filter((b) => b.start_time.toDate() >= now)
+    isAdmin ? bookings : bookings.filter((b) => new Date(b.start_time) >= now)
   );
 });
 app.post("/api/bookings", auth(), async (req, res) => {
