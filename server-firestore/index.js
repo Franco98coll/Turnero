@@ -171,12 +171,22 @@ app.get("/api/slots", async (req, res) => {
     const { date, from, to } = req.query;
     let q = db.collection(SLOTS);
     if (from && to) {
-      const fromD = new Date(`${from}T00:00:00.000Z`);
-      const toD = new Date(`${to}T23:59:59.999Z`);
+      // Parseo local: YYYY-MM-DD a límites del día en hora local
+      const [fy, fm, fd] = String(from)
+        .split("-")
+        .map((n) => parseInt(n, 10));
+      const [ty, tm, td] = String(to)
+        .split("-")
+        .map((n) => parseInt(n, 10));
+      const fromD = new Date(fy, (fm || 1) - 1, fd || 1, 0, 0, 0, 0);
+      const toD = new Date(ty, (tm || 1) - 1, td || 1, 23, 59, 59, 999);
       q = q.where("start_time", ">=", fromD).where("start_time", "<=", toD);
     } else if (date) {
-      const d0 = new Date(`${date}T00:00:00.000Z`);
-      const d1 = new Date(`${date}T23:59:59.999Z`);
+      const [y, m, d] = String(date)
+        .split("-")
+        .map((n) => parseInt(n, 10));
+      const d0 = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+      const d1 = new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999);
       q = q.where("start_time", ">=", d0).where("start_time", "<=", d1);
     }
     const snap = await q.orderBy("start_time", "asc").get();
@@ -216,9 +226,21 @@ app.post("/api/slots", auth("admin"), async (req, res) => {
   const { start_time, end_time, capacity } = req.body || {};
   if (!start_time || !end_time || !capacity)
     return res.status(400).json({ error: "Datos incompletos" });
+  // Convertir strings "YYYY-MM-DDTHH:MM" a Date local de forma segura
+  function parseLocalDateTime(s) {
+    if (s instanceof Date) return s;
+    const [datePart, timePart] = String(s).split("T");
+    const [yy, mm, dd] = datePart.split("-").map((n) => parseInt(n, 10));
+    const [hh = 0, mi = 0] = (timePart || "")
+      .split(":")
+      .map((n) => parseInt(n, 10));
+    return new Date(yy, (mm || 1) - 1, dd || 1, hh, mi, 0, 0);
+  }
+  const st = parseLocalDateTime(start_time);
+  const et = parseLocalDateTime(end_time);
   const doc = await db.collection(SLOTS).add({
-    start_time: new Date(start_time),
-    end_time: new Date(end_time),
+    start_time: st,
+    end_time: et,
     capacity,
   });
   res.status(201).json({ id: doc.id, start_time, end_time, capacity });
@@ -348,6 +370,57 @@ app.delete("/api/slots", auth("admin"), async (req, res) => {
   }
   await batch.commit();
   res.json({ ok: true });
+});
+
+// Listar inscriptos (bookings confirmados) de un turno con datos de usuario
+app.get("/api/slots/:id/attendees", auth("admin"), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const s = await db.collection(SLOTS).doc(id).get();
+    if (!s.exists) return res.status(404).json({ error: "Slot no encontrado" });
+    const bs = await db
+      .collection(BOOKINGS)
+      .where("slot_id", "==", id)
+      .where("status", "==", "confirmed")
+      .get();
+    const attendees = [];
+    for (const bd of bs.docs) {
+      const b = { id: bd.id, ...bd.data() };
+      const u = await db.collection(USERS).doc(b.user_id).get();
+      attendees.push({
+        booking_id: b.id,
+        user_id: b.user_id,
+        email: u.exists ? u.data().email : undefined,
+        name: u.exists ? u.data().name : undefined,
+        created_at: b.created_at?.toDate
+          ? b.created_at.toDate().toISOString()
+          : undefined,
+        status: b.status,
+      });
+    }
+    // Devolver también info del turno con fechas normalizadas
+    const sd = s.data();
+    const st = sd.start_time?.toDate
+      ? sd.start_time.toDate()
+      : new Date(sd.start_time);
+    const et = sd.end_time?.toDate
+      ? sd.end_time.toDate()
+      : new Date(sd.end_time);
+    res.json({
+      slot: {
+        id: s.id,
+        capacity: sd.capacity,
+        start_time: st.toISOString(),
+        end_time: et.toISOString(),
+      },
+      attendees,
+    });
+  } catch (e) {
+    console.error("/slots/:id/attendees error:", e);
+    res.status(500).json({
+      error: DEBUG_ERRORS ? e.stack || e.message : "Error en el servidor",
+    });
+  }
 });
 
 // Bookings

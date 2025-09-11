@@ -241,6 +241,9 @@
             :items-per-page="10"
           >
             <template v-slot:[`item.actions`]="{ item }">
+              <v-btn icon small class="mr-1" @click="openAttendees(item)">
+                <span class="material-icons">group</span>
+              </v-btn>
               <v-btn icon small color="error" @click="deleteSlot(item)"
                 ><span class="material-icons">delete</span></v-btn
               >
@@ -252,6 +255,35 @@
               fmtDateTime(item.end_time)
             }}</template>
           </v-data-table>
+
+          <v-dialog v-model="attDialog" max-width="600">
+            <v-card>
+              <v-card-title>
+                Inscriptos
+                <v-spacer></v-spacer>
+                <small v-if="attSlot"
+                  >{{ fmtDateTime(attSlot.start_time) }} · Capacidad
+                  {{ attSlot.capacity }}</small
+                >
+              </v-card-title>
+              <v-card-text>
+                <v-data-table
+                  :headers="attHeaders"
+                  :items="attendees"
+                  :items-per-page="10"
+                  dense
+                >
+                  <template v-slot:[`item.created_at`]="{ item }">{{
+                    fmtDateTime(item.created_at)
+                  }}</template>
+                </v-data-table>
+              </v-card-text>
+              <v-card-actions>
+                <v-spacer />
+                <v-btn text @click="attDialog = false">Cerrar</v-btn>
+              </v-card-actions>
+            </v-card>
+          </v-dialog>
         </div>
 
         <!-- Gestión de usuarios -->
@@ -439,6 +471,12 @@ const api = {
     const r = await fetch(this.base + "/bookings", { headers: this.headers() });
     return r.json();
   },
+  async getAttendees(slotId: string) {
+    const r = await fetch(this.base + "/slots/" + slotId + "/attendees", {
+      headers: this.headers(),
+    });
+    return r.json();
+  },
   async createBooking(slot_id: number) {
     const r = await fetch(this.base + "/bookings", {
       method: "POST",
@@ -503,6 +541,11 @@ const slotHeaders = [
   { text: "", value: "actions", sortable: false },
 ];
 const slotAdminHeaders = [...slotHeaders];
+const attHeaders = [
+  { text: "Nombre", value: "name" },
+  { text: "Email", value: "email" },
+  { text: "Reservado", value: "created_at" },
+];
 const userHeaders = [
   { text: "ID", value: "id" },
   { text: "Nombre", value: "name" },
@@ -529,6 +572,9 @@ const dialog = ref(false);
 const selected = ref<any | null>(null);
 const snackbar = ref(false);
 const snackbarText = ref("");
+const attDialog = ref(false);
+const attendees = ref<any[]>([]);
+const attSlot = ref<any | null>(null);
 
 async function doLogin() {
   try {
@@ -703,6 +749,17 @@ async function createSlot() {
 async function deleteSlot(item: any) {
   await api.deleteSlot(item.id);
   loadSlots();
+}
+async function openAttendees(item: any) {
+  const data = await api.getAttendees(item.id);
+  if (data?.error) {
+    snackbarText.value = data.error;
+    snackbar.value = true;
+    return;
+  }
+  attendees.value = data.attendees || [];
+  attSlot.value = data.slot || null;
+  attDialog.value = true;
 }
 async function deleteAllSlots() {
   if (
