@@ -115,11 +115,9 @@ app.post("/api/auth/login", async (req, res) => {
     });
   } catch (e) {
     console.error("/auth/login error:", e);
-    res
-      .status(500)
-      .json({
-        error: DEBUG_ERRORS ? e.stack || e.message : "Error en el servidor",
-      });
+    res.status(500).json({
+      error: DEBUG_ERRORS ? e.stack || e.message : "Error en el servidor",
+    });
   }
 });
 
@@ -197,11 +195,9 @@ app.get("/api/slots", async (req, res) => {
     res.json(slots);
   } catch (e) {
     console.error("/slots error:", e);
-    res
-      .status(500)
-      .json({
-        error: DEBUG_ERRORS ? e.stack || e.message : "Error en el servidor",
-      });
+    res.status(500).json({
+      error: DEBUG_ERRORS ? e.stack || e.message : "Error en el servidor",
+    });
   }
 });
 app.post("/api/slots", auth("admin"), async (req, res) => {
@@ -214,6 +210,112 @@ app.post("/api/slots", auth("admin"), async (req, res) => {
     capacity,
   });
   res.status(201).json({ id: doc.id, start_time, end_time, capacity });
+});
+
+// Crear turnos en bloque (agenda semanal)
+app.post("/api/slots/bulk", auth("admin"), async (req, res) => {
+  try {
+    const {
+      start_date,
+      end_date,
+      weekdays = [], // números 0-6 (domingo-sábado)
+      time_start, // "HH:MM"
+      time_end, // "HH:MM"
+      slot_minutes = 30,
+      capacity = 1,
+    } = req.body || {};
+
+    // Validaciones básicas
+    if (!start_date || !end_date || !time_start || !time_end)
+      return res.status(400).json({ error: "Datos incompletos" });
+    if (!Array.isArray(weekdays) || weekdays.length === 0)
+      return res.status(400).json({ error: "Seleccione días de semana" });
+    if (slot_minutes <= 0 || capacity <= 0)
+      return res.status(400).json({ error: "Valores inválidos" });
+
+    // Helpers de fecha en hora local
+    function parseDateOnly(s) {
+      const [y, m, d] = String(s)
+        .split("-")
+        .map((n) => parseInt(n, 10));
+      return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+    }
+    function parseTimeOnly(s) {
+      const [hh = 0, mm = 0] = String(s)
+        .split(":")
+        .map((n) => parseInt(n, 10));
+      return { hh, mm };
+    }
+
+    const dStart = parseDateOnly(start_date);
+    const dEnd = parseDateOnly(end_date);
+    const { hh: sh, mm: sm } = parseTimeOnly(time_start);
+    const { hh: eh, mm: em } = parseTimeOnly(time_end);
+    if (dEnd < dStart)
+      return res.status(400).json({ error: "Rango de fechas inválido" });
+
+    const toWrite = [];
+    // Recorre días y genera slots
+    for (let d = new Date(dStart); d <= dEnd; d.setDate(d.getDate() + 1)) {
+      const dow = d.getDay();
+      if (!weekdays.includes(dow)) continue;
+      const dayStart = new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate(),
+        sh,
+        sm,
+        0,
+        0
+      );
+      const dayEnd = new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate(),
+        eh,
+        em,
+        0,
+        0
+      );
+      // Evitar bucle si el fin es antes del inicio
+      if (dayEnd <= dayStart) continue;
+      let cur = new Date(dayStart);
+      while (cur < dayEnd) {
+        const end = new Date(cur.getTime() + slot_minutes * 60000);
+        if (end > dayEnd) break;
+        toWrite.push({ start_time: new Date(cur), end_time: end, capacity });
+        cur = end; // siguiente bloque
+      }
+    }
+
+    if (toWrite.length === 0)
+      return res.json({ created: 0, warning: "No se generaron turnos" });
+
+    // Escritura en lotes (máx ~500 por batch)
+    const chunk = (arr, size) =>
+      arr.reduce((acc, _, i) => {
+        if (i % size === 0) acc.push(arr.slice(i, i + size));
+        return acc;
+      }, []);
+    const batches = chunk(toWrite, 450);
+    let created = 0;
+    for (const part of batches) {
+      const batch = db.batch();
+      for (const s of part) {
+        const ref = db.collection(SLOTS).doc();
+        batch.set(ref, s);
+      }
+      await batch.commit();
+      created += part.length;
+    }
+
+    res.json({ created });
+  } catch (e) {
+    console.error("/slots/bulk error:", e);
+    res.status(500).json({
+      error: DEBUG_ERRORS ? e.stack || e.message : "Error en el servidor",
+    });
+  }
 });
 app.delete("/api/slots/:id", auth("admin"), async (req, res) => {
   const { id } = req.params;
