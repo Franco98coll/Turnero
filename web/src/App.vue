@@ -8,6 +8,8 @@
         <v-btn text @click="view = 'bookings'">Mis reservas</v-btn>
         <template v-if="user.role === 'admin'">
           <v-btn text @click="view = 'admin'">Admin</v-btn>
+          <v-btn text @click="view = 'adminCalendar'">Agenda Admin</v-btn>
+          <v-btn text @click="goPayments()">Pagos</v-btn>
           <v-btn text @click="goUsers()">Gestión de usuarios</v-btn>
         </template>
         <v-btn text @click="logout">Salir</v-btn>
@@ -32,6 +34,97 @@
               <v-btn color="primary" @click="doLogin">Entrar</v-btn>
             </v-card-actions>
           </v-card>
+        </div>
+
+        <!-- Agenda Admin: calendario de los turnos -->
+        <div v-else-if="view === 'adminCalendar' && user.role === 'admin'">
+          <h3 class="mt-8">Agenda de turnos</h3>
+          <v-row class="mb-2" align="center">
+            <v-col cols="12" md="3">
+              <v-text-field
+                dense
+                type="date"
+                label="Desde"
+                v-model="range.from"
+              />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field
+                dense
+                type="date"
+                label="Hasta"
+                v-model="range.to"
+              />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-select
+                dense
+                :items="viewModes"
+                label="Vista"
+                v-model="calendarView"
+              />
+            </v-col>
+            <v-col cols="12" md="3" class="d-flex justify-end">
+              <v-btn color="primary" @click="loadSlots">Actualizar</v-btn>
+            </v-col>
+          </v-row>
+          <v-sheet height="650">
+            <v-calendar
+              :now="today"
+              :weekdays="[1, 2, 3, 4, 5, 6, 0]"
+              :type="calendarView"
+              :events="events"
+              :event-color="getEventColor"
+              @click:event="({ event }) => openAttendees(event.raw)"
+            />
+          </v-sheet>
+        </div>
+
+        <!-- Pagos: administración de cuotas -->
+        <div v-else-if="view === 'payments' && user.role === 'admin'">
+          <h3>Pagos</h3>
+          <v-data-table
+            :headers="paymentsHeaders"
+            :items="users"
+            :items-per-page="10"
+          >
+            <template v-slot:[`item.payment_due_date`]="{ item }">
+              <v-text-field
+                dense
+                type="date"
+                v-model="item.payment_due_date"
+                @blur="savePaymentDue(item)"
+              />
+            </template>
+            <template v-slot:[`item.actions`]="{ item }">
+              <v-btn
+                x-small
+                class="mr-2"
+                @click="
+                  markPaid(
+                    item,
+                    new Date().getFullYear(),
+                    new Date().getMonth() + 1,
+                    true
+                  )
+                "
+                >Marcar pago</v-btn
+              >
+              <v-btn
+                x-small
+                color="error"
+                @click="
+                  markPaid(
+                    item,
+                    new Date().getFullYear(),
+                    new Date().getMonth() + 1,
+                    false
+                  )
+                "
+                >Quitar pago</v-btn
+              >
+            </template>
+          </v-data-table>
         </div>
 
         <div v-else-if="view === 'slots'">
@@ -96,11 +189,13 @@
                 <div v-if="selected">
                   <div>
                     <strong>Inicio:</strong>
-                    {{ fmtDateTime(selected.start_time) }}
+                    {{
+                      fmtDateTime(selected.start_local || selected.start_time)
+                    }}
                   </div>
                   <div>
                     <strong>Fin:</strong>
-                    {{ fmtDateTime(selected.end_time) }}
+                    {{ fmtDateTime(selected.end_local || selected.end_time) }}
                   </div>
                   <div>
                     <strong>Disponibles:</strong> {{ selected.remaining }}
@@ -492,10 +587,20 @@ const api = {
     });
     return r.json();
   },
+  async markPaid(userId: string, year: number, month: number, paid: boolean) {
+    const r = await fetch(this.base + "/users/" + userId + "/pay", {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ year, month, paid }),
+    });
+    return r.json();
+  },
 };
 
 const user = ref<any>(JSON.parse(localStorage.getItem("user") || "null"));
-const view = ref<"slots" | "bookings" | "admin" | "users">("slots");
+const view = ref<
+  "slots" | "bookings" | "admin" | "users" | "adminCalendar" | "payments"
+>("slots");
 const login = reactive({ email: "", password: "" });
 const date = ref<string>(new Date().toISOString().slice(0, 10));
 const range = reactive({
@@ -557,6 +662,12 @@ const bookingHeaders = [
   { text: "Inicio", value: "start_time" },
   { text: "Fin", value: "end_time" },
   { text: "Estado", value: "status" },
+  { text: "", value: "actions", sortable: false },
+];
+const paymentsHeaders = [
+  { text: "Nombre", value: "name" },
+  { text: "Email", value: "email" },
+  { text: "Fecha pago", value: "payment_due_date" },
   { text: "", value: "actions", sortable: false },
 ];
 
@@ -695,6 +806,10 @@ function goUsers() {
   view.value = "users";
   loadUsers();
 }
+function goPayments() {
+  view.value = "payments";
+  loadUsers();
+}
 function openEdit(item: any) {
   Object.assign(editUser, {
     id: item.id,
@@ -739,6 +854,23 @@ async function removeUser(item: any) {
 async function loadUsers() {
   if (!user.value || user.value.role !== "admin") return;
   users.value = await api.getUsers();
+}
+async function savePaymentDue(item: any) {
+  const payload: any = { payment_due_date: item.payment_due_date || null };
+  const resp = await api.updateUser(item.id, payload);
+  if (resp?.error) {
+    snackbarText.value = resp.error;
+    snackbar.value = true;
+  }
+}
+async function markPaid(item: any, year: number, month: number, paid: boolean) {
+  const resp = await api.markPaid(item.id, year, month, paid);
+  if (resp?.error) {
+    snackbarText.value = resp.error;
+    snackbar.value = true;
+    return;
+  }
+  await loadUsers();
 }
 async function createSlot() {
   const s = await api.createSlot(slotForm as any);

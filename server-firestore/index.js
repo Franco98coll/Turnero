@@ -42,6 +42,21 @@ const USERS = "users";
 const SLOTS = "slots";
 const BOOKINGS = "bookings";
 
+// Helpers
+function pad(n) {
+  return String(n).padStart(2, "0");
+}
+function toLocalString(dt) {
+  const d = dt instanceof Date ? dt : new Date(dt);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}`;
+}
+function monthKey(d) {
+  const dt = d instanceof Date ? d : new Date(d);
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}`;
+}
+
 function auth(requiredRole) {
   return (req, res, next) => {
     const authHeader = req.headers.authorization || "";
@@ -142,6 +157,10 @@ app.post("/api/users", auth("admin"), async (req, res) => {
     email,
     password_hash: hash,
     role: role || "user",
+    payment_due_date: req.body?.payment_due_date || null, // YYYY-MM-DD
+    paid_months: Array.isArray(req.body?.paid_months)
+      ? req.body.paid_months
+      : [],
     created_at: admin.firestore.FieldValue.serverTimestamp(),
   });
   res.status(201).json({ id: doc.id, name, email, role: role || "user" });
@@ -153,6 +172,10 @@ app.patch("/api/users/:id", auth("admin"), async (req, res) => {
   if (name) updates.name = name;
   if (email) updates.email = email;
   if (role) updates.role = role;
+  if (typeof req.body?.payment_due_date !== "undefined")
+    updates.payment_due_date = req.body.payment_due_date;
+  if (Array.isArray(req.body?.paid_months))
+    updates.paid_months = req.body.paid_months;
   if (password) updates.password_hash = await bcrypt.hash(password, 10);
   if (Object.keys(updates).length === 0) return res.json({ ok: true });
   await db.collection(USERS).doc(id).update(updates);
@@ -163,6 +186,26 @@ app.delete("/api/users/:id", auth("admin"), async (req, res) => {
   const { id } = req.params;
   await db.collection(USERS).doc(id).delete();
   res.json({ ok: true });
+});
+
+// Pagos: marcar mes como pago o impago
+app.post("/api/users/:id/pay", auth("admin"), async (req, res) => {
+  const { id } = req.params;
+  const { year, month, paid } = req.body || {}; // month 1-12
+  if (!year || !month || typeof paid === "undefined")
+    return res.status(400).json({ error: "Datos incompletos" });
+  const key = `${year}-${pad(parseInt(month, 10))}`;
+  const ref = db.collection(USERS).doc(id);
+  const doc = await ref.get();
+  if (!doc.exists)
+    return res.status(404).json({ error: "Usuario no encontrado" });
+  const u = doc.data();
+  const arr = Array.isArray(u.paid_months) ? u.paid_months : [];
+  const set = new Set(arr);
+  if (paid) set.add(key);
+  else set.delete(key);
+  await ref.update({ paid_months: Array.from(set) });
+  res.json({ ok: true, paid_months: Array.from(set) });
 });
 
 // Slots
@@ -210,6 +253,8 @@ app.get("/api/slots", async (req, res) => {
           capacity: s.capacity,
           start_time: st.toISOString(),
           end_time: et.toISOString(),
+          start_local: toLocalString(st),
+          end_local: toLocalString(et),
           remaining: (s.capacity || 0) - used,
         };
       })
@@ -445,6 +490,8 @@ app.get("/api/bookings", auth(), async (req, res) => {
         ...b,
         start_time: st.toISOString(),
         end_time: et.toISOString(),
+        start_local: toLocalString(st),
+        end_local: toLocalString(et),
       };
     })
   );
@@ -456,6 +503,39 @@ app.get("/api/bookings", auth(), async (req, res) => {
 app.post("/api/bookings", auth(), async (req, res) => {
   const { slot_id } = req.body || {};
   if (!slot_id) return res.status(400).json({ error: "slot_id requerido" });
+  // Reglas de pago: si el usuario debe y pasaron 7 días de la fecha de pago del mes actual, bloquear
+  try {
+    const uDoc = await db.collection(USERS).doc(req.user.id).get();
+    if (uDoc.exists) {
+      const u = uDoc.data();
+      const due = u.payment_due_date; // YYYY-MM-DD
+      const paid = Array.isArray(u.paid_months) ? u.paid_months : [];
+      const now = new Date();
+      const currentKey = monthKey(now);
+      if (due && !paid.includes(currentKey)) {
+        const [yy, mm, dd] = String(due)
+          .split("-")
+          .map((n) => parseInt(n, 10));
+        const dueDate = new Date(
+          now.getFullYear(),
+          (mm || 1) - 1,
+          dd || 1,
+          0,
+          0,
+          0,
+          0
+        );
+        const grace = new Date(dueDate.getTime() + 7 * 86400000);
+        if (now > grace) {
+          return res.status(402).json({
+            error: "Pago vencido. Regularice su cuota para reservar turnos.",
+          });
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("check payment rule error", e.message);
+  }
   const s = await db.collection(SLOTS).doc(slot_id).get();
   if (!s.exists) return res.status(404).json({ error: "Slot no encontrado" });
   const cap = s.data().capacity || 0;
