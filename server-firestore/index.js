@@ -1,28 +1,50 @@
+// Carga de variables de entorno desde .env (solo en desarrollo/local)
 require("dotenv").config();
-const express = require("express");
-const cors = require("cors");
-const jwt = require("jsonwebtoken");
-const bcrypt = require("bcryptjs");
-const admin = require("firebase-admin");
 
-// Inicializar Firebase Admin
-// Necesita GOOGLE_APPLICATION_CREDENTIALS o GOOGLE_APPLICATION_CREDENTIALS_JSON en Render
-let FIREBASE_PROJECT =
+// Dependencias principales del servidor
+const express = require("express"); // Framework HTTP
+const cors = require("cors"); // Middleware CORS
+const jwt = require("jsonwebtoken"); // Manejo de JWT
+const bcrypt = require("bcryptjs"); // Hash/compare de contraseñas
+const administrador = require("firebase-admin"); // SDK Admin de Firebase
+
+// ---------------------------------------------
+// Inicialización de Firebase Admin (Firestore)
+// ---------------------------------------------
+// Se puede usar cualquiera de estas variables de entorno (compatibilidad):
+// - CREDENCIALES_FIREBASE_JSON (nueva, español) o GOOGLE_APPLICATION_CREDENTIALS_JSON (existente)
+// - RUTA_CREDENCIALES_FIREBASE (nueva) o GOOGLE_APPLICATION_CREDENTIALS (existente)
+let PROYECTO_FIREBASE =
   process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || "";
-if (!admin.apps.length) {
+
+if (!administrador.apps.length) {
   try {
-    if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-      const creds = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
-      if (creds.private_key && typeof creds.private_key === "string") {
-        creds.private_key = creds.private_key.replace(/\\n/g, "\n");
+    // Preferencia 1: JSON de credenciales embebido en variable de entorno
+    const JSON_CREDENCIALES =
+      process.env.CREDENCIALES_FIREBASE_JSON ||
+      process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+
+    if (JSON_CREDENCIALES) {
+      const credenciales = JSON.parse(JSON_CREDENCIALES);
+      // Normalización de saltos de línea para la clave privada
+      if (
+        credenciales.private_key &&
+        typeof credenciales.private_key === "string"
+      ) {
+        credenciales.private_key = credenciales.private_key.replace(
+          /\\n/g,
+          "\n"
+        );
       }
-      FIREBASE_PROJECT = creds.project_id || FIREBASE_PROJECT;
-      admin.initializeApp({
-        credential: admin.credential.cert(creds),
-        projectId: FIREBASE_PROJECT || undefined,
+      PROYECTO_FIREBASE = credenciales.project_id || PROYECTO_FIREBASE;
+      administrador.initializeApp({
+        credential: administrador.credential.cert(credenciales),
+        projectId: PROYECTO_FIREBASE || undefined,
       });
     } else {
-      admin.initializeApp();
+      // Preferencia 2: Ruta a archivo con credenciales (ADC o GOOGLE_APPLICATION_CREDENTIALS)
+      // Si no hay JSON, delega en credenciales por defecto del entorno
+      administrador.initializeApp();
     }
   } catch (e) {
     console.error("Error inicializando Firebase Admin:", e.stack || e.message);
@@ -30,42 +52,71 @@ if (!admin.apps.length) {
   }
 }
 
-const db = admin.firestore();
-const app = express();
-app.use(cors());
-app.use(express.json());
+// Cliente de Firestore y aplicación Express
+const baseDeDatos = administrador.firestore();
+const aplicacion = express();
+aplicacion.use(cors());
+aplicacion.use(express.json());
 
-const JWT_SECRET = process.env.JWT_SECRET || "secret";
-const DEBUG_ERRORS =
-  process.env.DEBUG_ERRORS === "1" || process.env.DEBUG_ERRORS === "true";
-const USERS = "users";
-const SLOTS = "slots";
-const BOOKINGS = "bookings";
+// -------------------------------
+// Configuración y constantes APP
+// -------------------------------
+// Compatibilidad: usa variables en español si existen; si no, las históricas.
+const CLAVE_JWT = process.env.CLAVE_JWT || process.env.JWT_SECRET || "secret";
+const DEPURAR_ERRORES =
+  process.env.DEPURAR_ERRORES === "1" ||
+  process.env.DEPURAR_ERRORES === "true" ||
+  process.env.DEBUG_ERRORS === "1" ||
+  process.env.DEBUG_ERRORS === "true";
 
-// Helpers
-function pad(n) {
-  return String(n).padStart(2, "0");
-}
-function toLocalString(dt) {
-  const d = dt instanceof Date ? dt : new Date(dt);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours()
-  )}:${pad(d.getMinutes())}`;
-}
-function monthKey(d) {
-  const dt = d instanceof Date ? d : new Date(d);
-  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}`;
+// Nombres de colecciones (NO cambiar los literales, solo los identificadores locales)
+const COLECCION_USUARIOS = "users";
+const COLECCION_TURNOS = "slots";
+const COLECCION_RESERVAS = "bookings";
+
+// ---------------------------------
+// Funciones de utilidad (helpers)
+// ---------------------------------
+/**
+ * Rellena con cero a la izquierda hasta 2 dígitos
+ */
+function rellenar2(numero) {
+  return String(numero).padStart(2, "0");
 }
 
-function auth(requiredRole) {
+/**
+ * Convierte una fecha a cadena local YYYY-MM-DDTHH:MM (según zona horaria del servidor)
+ */
+function aCadenaLocal(fecha) {
+  const d = fecha instanceof Date ? fecha : new Date(fecha);
+  return `${d.getFullYear()}-${rellenar2(d.getMonth() + 1)}-${rellenar2(
+    d.getDate()
+  )}T${rellenar2(d.getHours())}:${rellenar2(d.getMinutes())}`;
+}
+
+/**
+ * Devuelve la clave de mes actual en formato YYYY-MM
+ */
+function claveMes(fecha) {
+  const d = fecha instanceof Date ? fecha : new Date(fecha);
+  return `${d.getFullYear()}-${rellenar2(d.getMonth() + 1)}`;
+}
+
+/**
+ * Middleware de autenticación/autorización mediante JWT.
+ * Si se indica `rolRequerido`, valida que el usuario posea dicho rol.
+ */
+function autenticar(rolRequerido) {
   return (req, res, next) => {
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+    const cabeceraAuth = req.headers.authorization || "";
+    const token = cabeceraAuth.startsWith("Bearer ")
+      ? cabeceraAuth.slice(7)
+      : "";
     if (!token) return res.status(401).json({ error: "No token" });
     try {
-      const decoded = jwt.verify(token, JWT_SECRET);
-      req.user = decoded;
-      if (requiredRole && decoded.role !== requiredRole) {
+      const decodificado = jwt.verify(token, CLAVE_JWT);
+      req.user = decodificado;
+      if (rolRequerido && decodificado.role !== rolRequerido) {
         return res.status(403).json({ error: "Forbidden" });
       }
       next();
@@ -75,84 +126,107 @@ function auth(requiredRole) {
   };
 }
 
-app.get("/api/health", (req, res) => {
+// Endpoint de salud para verificar disponibilidad del servicio
+aplicacion.get("/api/health", (req, res) => {
   res.json({
     ok: true,
     time: new Date().toISOString(),
-    project: FIREBASE_PROJECT || "unknown",
+    project: PROYECTO_FIREBASE || "unknown",
   });
 });
 
 // Diagnóstico de Firestore: prueba de escritura/lectura
-app.get("/api/diag", async (req, res) => {
+// Endpoint de diagnóstico simple: prueba de escritura/lectura en Firestore
+aplicacion.get("/api/diag", async (req, res) => {
   try {
-    const pingRef = db.collection("diag").doc("ping");
-    await pingRef.set(
-      { t: admin.firestore.FieldValue.serverTimestamp() },
+    const referenciaPing = baseDeDatos.collection("diag").doc("ping");
+    await referenciaPing.set(
+      { t: administrador.firestore.FieldValue.serverTimestamp() },
       { merge: true }
     );
-    const got = await pingRef.get();
+    const obtenido = await referenciaPing.get();
     res.json({
       ok: true,
-      project: FIREBASE_PROJECT || "unknown",
-      exists: got.exists,
+      project: PROYECTO_FIREBASE || "unknown",
+      exists: obtenido.exists,
     });
   } catch (e) {
-    const err = DEBUG_ERRORS ? e.stack || e.message : "Error en el servidor";
+    const err = DEPURAR_ERRORES ? e.stack || e.message : "Error en el servidor";
     res.status(500).json({ error: err });
   }
 });
 
 // Auth
-app.post("/api/auth/login", async (req, res) => {
+// ---------------------------------
+// Autenticación (login con email)
+// ---------------------------------
+aplicacion.post("/api/auth/login", async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password)
     return res.status(400).json({ error: "Datos incompletos" });
   try {
-    const snap = await db
-      .collection(USERS)
+    const instantanea = await baseDeDatos
+      .collection(COLECCION_USUARIOS)
       .where("email", "==", email)
       .limit(1)
       .get();
-    const doc = snap.docs[0];
-    if (!doc) return res.status(401).json({ error: "Credenciales inválidas" });
-    const u = { id: doc.id, ...doc.data() };
-    const ok = await bcrypt.compare(password, u.password_hash);
-    if (!ok) return res.status(401).json({ error: "Credenciales inválidas" });
+    const documento = instantanea.docs[0];
+    if (!documento)
+      return res.status(401).json({ error: "Credenciales inválidas" });
+    const usuario = { id: documento.id, ...documento.data() };
+    const coincide = await bcrypt.compare(password, usuario.password_hash);
+    if (!coincide)
+      return res.status(401).json({ error: "Credenciales inválidas" });
     const token = jwt.sign(
-      { id: u.id, role: u.role, email: u.email, name: u.name },
-      JWT_SECRET,
+      {
+        id: usuario.id,
+        role: usuario.role,
+        email: usuario.email,
+        name: usuario.name,
+      },
+      CLAVE_JWT,
       { expiresIn: "8h" }
     );
     res.json({
       token,
-      user: { id: u.id, name: u.name, email: u.email, role: u.role },
+      user: {
+        id: usuario.id,
+        name: usuario.name,
+        email: usuario.email,
+        role: usuario.role,
+      },
     });
   } catch (e) {
     console.error("/auth/login error:", e);
     res.status(500).json({
-      error: DEBUG_ERRORS ? e.stack || e.message : "Error en el servidor",
+      error: DEPURAR_ERRORES ? e.stack || e.message : "Error en el servidor",
     });
   }
 });
 
 // Users
-app.get("/api/users", auth("admin"), async (req, res) => {
-  const snap = await db.collection(USERS).orderBy("created_at", "desc").get();
-  res.json(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+// ----------------------
+// Gestión de usuarios
+// ----------------------
+aplicacion.get("/api/users", autenticar("admin"), async (req, res) => {
+  const instantanea = await baseDeDatos
+    .collection(COLECCION_USUARIOS)
+    .orderBy("created_at", "desc")
+    .get();
+  res.json(instantanea.docs.map((d) => ({ id: d.id, ...d.data() })));
 });
-app.post("/api/users", auth("admin"), async (req, res) => {
+aplicacion.post("/api/users", autenticar("admin"), async (req, res) => {
   const { name, email, password, role } = req.body || {};
   if (!name || !email || !password)
     return res.status(400).json({ error: "Datos incompletos" });
-  const exists = await db
-    .collection(USERS)
+  const existe = await baseDeDatos
+    .collection(COLECCION_USUARIOS)
     .where("email", "==", email)
     .limit(1)
     .get();
-  if (!exists.empty) return res.status(409).json({ error: "Email ya existe" });
+  if (!existe.empty) return res.status(409).json({ error: "Email ya existe" });
   const hash = await bcrypt.hash(password, 10);
-  const doc = await db.collection(USERS).add({
+  const documento = await baseDeDatos.collection(COLECCION_USUARIOS).add({
     name,
     email,
     password_hash: hash,
@@ -161,11 +235,11 @@ app.post("/api/users", auth("admin"), async (req, res) => {
     paid_months: Array.isArray(req.body?.paid_months)
       ? req.body.paid_months
       : [],
-    created_at: admin.firestore.FieldValue.serverTimestamp(),
+    created_at: administrador.firestore.FieldValue.serverTimestamp(),
   });
-  res.status(201).json({ id: doc.id, name, email, role: role || "user" });
+  res.status(201).json({ id: documento.id, name, email, role: role || "user" });
 });
-app.patch("/api/users/:id", auth("admin"), async (req, res) => {
+aplicacion.patch("/api/users/:id", autenticar("admin"), async (req, res) => {
   const { id } = req.params;
   const { name, email, password, role } = req.body || {};
   const updates = {};
@@ -178,41 +252,48 @@ app.patch("/api/users/:id", auth("admin"), async (req, res) => {
     updates.paid_months = req.body.paid_months;
   if (password) updates.password_hash = await bcrypt.hash(password, 10);
   if (Object.keys(updates).length === 0) return res.json({ ok: true });
-  await db.collection(USERS).doc(id).update(updates);
-  const got = await db.collection(USERS).doc(id).get();
-  res.json({ id: got.id, ...got.data() });
+  await baseDeDatos.collection(COLECCION_USUARIOS).doc(id).update(updates);
+  const obtenido = await baseDeDatos
+    .collection(COLECCION_USUARIOS)
+    .doc(id)
+    .get();
+  res.json({ id: obtenido.id, ...obtenido.data() });
 });
-app.delete("/api/users/:id", auth("admin"), async (req, res) => {
+aplicacion.delete("/api/users/:id", autenticar("admin"), async (req, res) => {
   const { id } = req.params;
-  await db.collection(USERS).doc(id).delete();
+  await baseDeDatos.collection(COLECCION_USUARIOS).doc(id).delete();
   res.json({ ok: true });
 });
 
 // Pagos: marcar mes como pago o impago
-app.post("/api/users/:id/pay", auth("admin"), async (req, res) => {
+// Marcar un mes como pago/impago para un usuario
+aplicacion.post("/api/users/:id/pay", autenticar("admin"), async (req, res) => {
   const { id } = req.params;
   const { year, month, paid } = req.body || {}; // month 1-12
   if (!year || !month || typeof paid === "undefined")
     return res.status(400).json({ error: "Datos incompletos" });
-  const key = `${year}-${pad(parseInt(month, 10))}`;
-  const ref = db.collection(USERS).doc(id);
-  const doc = await ref.get();
-  if (!doc.exists)
+  const key = `${year}-${rellenar2(parseInt(month, 10))}`;
+  const referencia = baseDeDatos.collection(COLECCION_USUARIOS).doc(id);
+  const documento = await referencia.get();
+  if (!documento.exists)
     return res.status(404).json({ error: "Usuario no encontrado" });
-  const u = doc.data();
-  const arr = Array.isArray(u.paid_months) ? u.paid_months : [];
+  const usuario = documento.data();
+  const arr = Array.isArray(usuario.paid_months) ? usuario.paid_months : [];
   const set = new Set(arr);
   if (paid) set.add(key);
   else set.delete(key);
-  await ref.update({ paid_months: Array.from(set) });
+  await referencia.update({ paid_months: Array.from(set) });
   res.json({ ok: true, paid_months: Array.from(set) });
 });
 
 // Slots
-app.get("/api/slots", async (req, res) => {
+// ----------------------
+// Gestión de turnos
+// ----------------------
+aplicacion.get("/api/slots", async (req, res) => {
   try {
     const { date, from, to } = req.query;
-    let q = db.collection(SLOTS);
+    let consulta = baseDeDatos.collection(COLECCION_TURNOS);
     if (from && to) {
       // Parseo local: YYYY-MM-DD a límites del día en hora local
       const [fy, fm, fd] = String(from)
@@ -223,51 +304,55 @@ app.get("/api/slots", async (req, res) => {
         .map((n) => parseInt(n, 10));
       const fromD = new Date(fy, (fm || 1) - 1, fd || 1, 0, 0, 0, 0);
       const toD = new Date(ty, (tm || 1) - 1, td || 1, 23, 59, 59, 999);
-      q = q.where("start_time", ">=", fromD).where("start_time", "<=", toD);
+      consulta = consulta
+        .where("start_time", ">=", fromD)
+        .where("start_time", "<=", toD);
     } else if (date) {
       const [y, m, d] = String(date)
         .split("-")
         .map((n) => parseInt(n, 10));
       const d0 = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
       const d1 = new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999);
-      q = q.where("start_time", ">=", d0).where("start_time", "<=", d1);
+      consulta = consulta
+        .where("start_time", ">=", d0)
+        .where("start_time", "<=", d1);
     }
-    const snap = await q.orderBy("start_time", "asc").get();
-    const slots = await Promise.all(
-      snap.docs.map(async (d) => {
-        const s = { id: d.id, ...d.data() };
-        const b = await db
-          .collection(BOOKINGS)
-          .where("slot_id", "==", d.id)
+    const instantanea = await consulta.orderBy("start_time", "asc").get();
+    const turnos = await Promise.all(
+      instantanea.docs.map(async (docTurno) => {
+        const turno = { id: docTurno.id, ...docTurno.data() };
+        const reservasConfirmadas = await baseDeDatos
+          .collection(COLECCION_RESERVAS)
+          .where("slot_id", "==", docTurno.id)
           .where("status", "==", "confirmed")
           .get();
-        const used = b.size;
-        const st = s.start_time?.toDate
-          ? s.start_time.toDate()
-          : new Date(s.start_time);
-        const et = s.end_time?.toDate
-          ? s.end_time.toDate()
-          : new Date(s.end_time);
+        const ocupados = reservasConfirmadas.size;
+        const inicio = turno.start_time?.toDate
+          ? turno.start_time.toDate()
+          : new Date(turno.start_time);
+        const fin = turno.end_time?.toDate
+          ? turno.end_time.toDate()
+          : new Date(turno.end_time);
         return {
-          id: s.id,
-          capacity: s.capacity,
-          start_time: st.toISOString(),
-          end_time: et.toISOString(),
-          start_local: toLocalString(st),
-          end_local: toLocalString(et),
-          remaining: (s.capacity || 0) - used,
+          id: turno.id,
+          capacity: turno.capacity,
+          start_time: inicio.toISOString(),
+          end_time: fin.toISOString(),
+          start_local: aCadenaLocal(inicio),
+          end_local: aCadenaLocal(fin),
+          remaining: (turno.capacity || 0) - ocupados,
         };
       })
     );
-    res.json(slots);
+    res.json(turnos);
   } catch (e) {
     console.error("/slots error:", e);
     res.status(500).json({
-      error: DEBUG_ERRORS ? e.stack || e.message : "Error en el servidor",
+      error: DEPURAR_ERRORES ? e.stack || e.message : "Error en el servidor",
     });
   }
 });
-app.post("/api/slots", auth("admin"), async (req, res) => {
+aplicacion.post("/api/slots", autenticar("admin"), async (req, res) => {
   const { start_time, end_time, capacity } = req.body || {};
   if (!start_time || !end_time || !capacity)
     return res.status(400).json({ error: "Datos incompletos" });
@@ -283,16 +368,17 @@ app.post("/api/slots", auth("admin"), async (req, res) => {
   }
   const st = parseLocalDateTime(start_time);
   const et = parseLocalDateTime(end_time);
-  const doc = await db.collection(SLOTS).add({
+  const documento = await baseDeDatos.collection(COLECCION_TURNOS).add({
     start_time: st,
     end_time: et,
     capacity,
   });
-  res.status(201).json({ id: doc.id, start_time, end_time, capacity });
+  res.status(201).json({ id: documento.id, start_time, end_time, capacity });
 });
 
 // Crear turnos en bloque (agenda semanal)
-app.post("/api/slots/bulk", auth("admin"), async (req, res) => {
+// Crear turnos en bloque según rango de fechas, días de semana y duración
+aplicacion.post("/api/slots/bulk", autenticar("admin"), async (req, res) => {
   try {
     const {
       start_date,
@@ -333,7 +419,7 @@ app.post("/api/slots/bulk", auth("admin"), async (req, res) => {
     if (dEnd < dStart)
       return res.status(400).json({ error: "Rango de fechas inválido" });
 
-    const toWrite = [];
+    const aEscribir = [];
     // Recorre días y genera slots
     for (let d = new Date(dStart); d <= dEnd; d.setDate(d.getDate() + 1)) {
       const dow = d.getDay();
@@ -362,12 +448,12 @@ app.post("/api/slots/bulk", auth("admin"), async (req, res) => {
       while (cur < dayEnd) {
         const end = new Date(cur.getTime() + slot_minutes * 60000);
         if (end > dayEnd) break;
-        toWrite.push({ start_time: new Date(cur), end_time: end, capacity });
+        aEscribir.push({ start_time: new Date(cur), end_time: end, capacity });
         cur = end; // siguiente bloque
       }
     }
 
-    if (toWrite.length === 0)
+    if (aEscribir.length === 0)
       return res.json({ created: 0, warning: "No se generaron turnos" });
 
     // Escritura en lotes (máx ~500 por batch)
@@ -376,148 +462,181 @@ app.post("/api/slots/bulk", auth("admin"), async (req, res) => {
         if (i % size === 0) acc.push(arr.slice(i, i + size));
         return acc;
       }, []);
-    const batches = chunk(toWrite, 450);
-    let created = 0;
-    for (const part of batches) {
-      const batch = db.batch();
-      for (const s of part) {
-        const ref = db.collection(SLOTS).doc();
-        batch.set(ref, s);
+    const lotes = chunk(aEscribir, 450);
+    let creados = 0;
+    for (const parte of lotes) {
+      const lote = baseDeDatos.batch();
+      for (const turno of parte) {
+        const referencia = baseDeDatos.collection(COLECCION_TURNOS).doc();
+        lote.set(referencia, turno);
       }
-      await batch.commit();
-      created += part.length;
+      await lote.commit();
+      creados += parte.length;
     }
 
-    res.json({ created });
+    res.json({ created: creados });
   } catch (e) {
     console.error("/slots/bulk error:", e);
     res.status(500).json({
-      error: DEBUG_ERRORS ? e.stack || e.message : "Error en el servidor",
+      error: DEPURAR_ERRORES ? e.stack || e.message : "Error en el servidor",
     });
   }
 });
-app.delete("/api/slots/:id", auth("admin"), async (req, res) => {
+aplicacion.delete("/api/slots/:id", autenticar("admin"), async (req, res) => {
   const { id } = req.params;
-  const b = await db.collection(BOOKINGS).where("slot_id", "==", id).get();
-  const batch = db.batch();
-  b.docs.forEach((doc) => batch.delete(doc.ref));
-  batch.delete(db.collection(SLOTS).doc(id));
-  await batch.commit();
+  const reservas = await baseDeDatos
+    .collection(COLECCION_RESERVAS)
+    .where("slot_id", "==", id)
+    .get();
+  const lote = baseDeDatos.batch();
+  reservas.docs.forEach((docReserva) => lote.delete(docReserva.ref));
+  lote.delete(baseDeDatos.collection(COLECCION_TURNOS).doc(id));
+  await lote.commit();
   res.json({ ok: true });
 });
-app.delete("/api/slots", auth("admin"), async (req, res) => {
-  const slotsSnap = await db.collection(SLOTS).get();
-  const batch = db.batch();
-  for (const s of slotsSnap.docs) {
-    const b = await db.collection(BOOKINGS).where("slot_id", "==", s.id).get();
-    b.docs.forEach((doc) => batch.delete(doc.ref));
-    batch.delete(s.ref);
+aplicacion.delete("/api/slots", autenticar("admin"), async (req, res) => {
+  const turnosSnap = await baseDeDatos.collection(COLECCION_TURNOS).get();
+  const lote = baseDeDatos.batch();
+  for (const dTurno of turnosSnap.docs) {
+    const reservas = await baseDeDatos
+      .collection(COLECCION_RESERVAS)
+      .where("slot_id", "==", dTurno.id)
+      .get();
+    reservas.docs.forEach((docReserva) => lote.delete(docReserva.ref));
+    lote.delete(dTurno.ref);
   }
-  await batch.commit();
+  await lote.commit();
   res.json({ ok: true });
 });
 
 // Listar inscriptos (bookings confirmados) de un turno con datos de usuario
-app.get("/api/slots/:id/attendees", auth("admin"), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const s = await db.collection(SLOTS).doc(id).get();
-    if (!s.exists) return res.status(404).json({ error: "Slot no encontrado" });
-    const bs = await db
-      .collection(BOOKINGS)
-      .where("slot_id", "==", id)
-      .where("status", "==", "confirmed")
-      .get();
-    const attendees = [];
-    for (const bd of bs.docs) {
-      const b = { id: bd.id, ...bd.data() };
-      const u = await db.collection(USERS).doc(b.user_id).get();
-      attendees.push({
-        booking_id: b.id,
-        user_id: b.user_id,
-        email: u.exists ? u.data().email : undefined,
-        name: u.exists ? u.data().name : undefined,
-        created_at: b.created_at?.toDate
-          ? b.created_at.toDate().toISOString()
-          : undefined,
-        status: b.status,
+// Listar inscriptos confirmados en un turno, con datos de usuario
+aplicacion.get(
+  "/api/slots/:id/attendees",
+  autenticar("admin"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const turnoDoc = await baseDeDatos
+        .collection(COLECCION_TURNOS)
+        .doc(id)
+        .get();
+      if (!turnoDoc.exists)
+        return res.status(404).json({ error: "Slot no encontrado" });
+      const reservasSnap = await baseDeDatos
+        .collection(COLECCION_RESERVAS)
+        .where("slot_id", "==", id)
+        .where("status", "==", "confirmed")
+        .get();
+      const asistentes = [];
+      for (const docReserva of reservasSnap.docs) {
+        const reserva = { id: docReserva.id, ...docReserva.data() };
+        const docUsuario = await baseDeDatos
+          .collection(COLECCION_USUARIOS)
+          .doc(reserva.user_id)
+          .get();
+        asistentes.push({
+          booking_id: reserva.id,
+          user_id: reserva.user_id,
+          email: docUsuario.exists ? docUsuario.data().email : undefined,
+          name: docUsuario.exists ? docUsuario.data().name : undefined,
+          created_at: reserva.created_at?.toDate
+            ? reserva.created_at.toDate().toISOString()
+            : undefined,
+          status: reserva.status,
+        });
+      }
+      // Devolver también info del turno con fechas normalizadas
+      const datosTurno = turnoDoc.data();
+      const inicio = datosTurno.start_time?.toDate
+        ? datosTurno.start_time.toDate()
+        : new Date(datosTurno.start_time);
+      const fin = datosTurno.end_time?.toDate
+        ? datosTurno.end_time.toDate()
+        : new Date(datosTurno.end_time);
+      res.json({
+        slot: {
+          id: turnoDoc.id,
+          capacity: datosTurno.capacity,
+          start_time: inicio.toISOString(),
+          end_time: fin.toISOString(),
+        },
+        attendees: asistentes,
+      });
+    } catch (e) {
+      console.error("/slots/:id/attendees error:", e);
+      res.status(500).json({
+        error: DEPURAR_ERRORES ? e.stack || e.message : "Error en el servidor",
       });
     }
-    // Devolver también info del turno con fechas normalizadas
-    const sd = s.data();
-    const st = sd.start_time?.toDate
-      ? sd.start_time.toDate()
-      : new Date(sd.start_time);
-    const et = sd.end_time?.toDate
-      ? sd.end_time.toDate()
-      : new Date(sd.end_time);
-    res.json({
-      slot: {
-        id: s.id,
-        capacity: sd.capacity,
-        start_time: st.toISOString(),
-        end_time: et.toISOString(),
-      },
-      attendees,
-    });
-  } catch (e) {
-    console.error("/slots/:id/attendees error:", e);
-    res.status(500).json({
-      error: DEBUG_ERRORS ? e.stack || e.message : "Error en el servidor",
-    });
   }
-});
+);
 
 // Bookings
-app.get("/api/bookings", auth(), async (req, res) => {
-  const isAdmin = req.user.role === "admin";
-  let q = db.collection(BOOKINGS);
-  if (!isAdmin)
-    q = q.where("user_id", "==", req.user.id).where("status", "!=", "canceled");
-  const snap = await q.get();
-  const bookings = await Promise.all(
-    snap.docs.map(async (d) => {
-      const b = { id: d.id, ...d.data() };
-      const s = await db.collection(SLOTS).doc(b.slot_id).get();
-      const sd = s.data();
-      const st = sd.start_time?.toDate
-        ? sd.start_time.toDate()
-        : new Date(sd.start_time);
-      const et = sd.end_time?.toDate
-        ? sd.end_time.toDate()
-        : new Date(sd.end_time);
+// ----------------------
+// Reservas (bookings)
+// ----------------------
+aplicacion.get("/api/bookings", autenticar(), async (req, res) => {
+  const esAdministrador = req.user.role === "admin";
+  let consulta = baseDeDatos.collection(COLECCION_RESERVAS);
+  if (!esAdministrador)
+    consulta = consulta
+      .where("user_id", "==", req.user.id)
+      .where("status", "!=", "canceled");
+  const instantanea = await consulta.get();
+  const reservas = await Promise.all(
+    instantanea.docs.map(async (docReserva) => {
+      const reserva = { id: docReserva.id, ...docReserva.data() };
+      const docTurno = await baseDeDatos
+        .collection(COLECCION_TURNOS)
+        .doc(reserva.slot_id)
+        .get();
+      const datosTurno = docTurno.data();
+      const inicio = datosTurno.start_time?.toDate
+        ? datosTurno.start_time.toDate()
+        : new Date(datosTurno.start_time);
+      const fin = datosTurno.end_time?.toDate
+        ? datosTurno.end_time.toDate()
+        : new Date(datosTurno.end_time);
       return {
-        ...b,
-        start_time: st.toISOString(),
-        end_time: et.toISOString(),
-        start_local: toLocalString(st),
-        end_local: toLocalString(et),
+        ...reserva,
+        start_time: inicio.toISOString(),
+        end_time: fin.toISOString(),
+        start_local: aCadenaLocal(inicio),
+        end_local: aCadenaLocal(fin),
       };
     })
   );
-  const now = new Date();
+  const ahora = new Date();
   res.json(
-    isAdmin ? bookings : bookings.filter((b) => new Date(b.start_time) >= now)
+    esAdministrador
+      ? reservas
+      : reservas.filter((r) => new Date(r.start_time) >= ahora)
   );
 });
-app.post("/api/bookings", auth(), async (req, res) => {
+aplicacion.post("/api/bookings", autenticar(), async (req, res) => {
   const { slot_id } = req.body || {};
   if (!slot_id) return res.status(400).json({ error: "slot_id requerido" });
   // Reglas de pago: si el usuario debe y pasaron 7 días de la fecha de pago del mes actual, bloquear
   try {
-    const uDoc = await db.collection(USERS).doc(req.user.id).get();
-    if (uDoc.exists) {
-      const u = uDoc.data();
-      const due = u.payment_due_date; // YYYY-MM-DD
-      const paid = Array.isArray(u.paid_months) ? u.paid_months : [];
-      const now = new Date();
-      const currentKey = monthKey(now);
-      if (due && !paid.includes(currentKey)) {
-        const [yy, mm, dd] = String(due)
+    const docUsuario = await baseDeDatos
+      .collection(COLECCION_USUARIOS)
+      .doc(req.user.id)
+      .get();
+    if (docUsuario.exists) {
+      const usuario = docUsuario.data();
+      const fechaVencimiento = usuario.payment_due_date; // YYYY-MM-DD
+      const mesesPagos = Array.isArray(usuario.paid_months)
+        ? usuario.paid_months
+        : [];
+      const ahora = new Date();
+      const claveMesActual = claveMes(ahora);
+      if (fechaVencimiento && !mesesPagos.includes(claveMesActual)) {
+        const [yy, mm, dd] = String(fechaVencimiento)
           .split("-")
           .map((n) => parseInt(n, 10));
-        const dueDate = new Date(
-          now.getFullYear(),
+        const fechaDelMes = new Date(
+          ahora.getFullYear(),
           (mm || 1) - 1,
           dd || 1,
           0,
@@ -525,8 +644,8 @@ app.post("/api/bookings", auth(), async (req, res) => {
           0,
           0
         );
-        const grace = new Date(dueDate.getTime() + 7 * 86400000);
-        if (now > grace) {
+        const gracia = new Date(fechaDelMes.getTime() + 7 * 86400000);
+        if (ahora > gracia) {
           return res.status(402).json({
             error: "Pago vencido. Regularice su cuota para reservar turnos.",
           });
@@ -536,35 +655,48 @@ app.post("/api/bookings", auth(), async (req, res) => {
   } catch (e) {
     console.warn("check payment rule error", e.message);
   }
-  const s = await db.collection(SLOTS).doc(slot_id).get();
-  if (!s.exists) return res.status(404).json({ error: "Slot no encontrado" });
-  const cap = s.data().capacity || 0;
-  const used = (
-    await db
-      .collection(BOOKINGS)
+  const docTurno = await baseDeDatos
+    .collection(COLECCION_TURNOS)
+    .doc(slot_id)
+    .get();
+  if (!docTurno.exists)
+    return res.status(404).json({ error: "Slot no encontrado" });
+  const capacidad = docTurno.data().capacity || 0;
+  const ocupados = (
+    await baseDeDatos
+      .collection(COLECCION_RESERVAS)
       .where("slot_id", "==", slot_id)
       .where("status", "==", "confirmed")
       .get()
   ).size;
-  if (used >= cap) return res.status(409).json({ error: "Sin cupo" });
-  const doc = await db.collection(BOOKINGS).add({
+  if (ocupados >= capacidad) return res.status(409).json({ error: "Sin cupo" });
+  const documento = await baseDeDatos.collection(COLECCION_RESERVAS).add({
     user_id: req.user.id,
     slot_id,
     status: "confirmed",
-    created_at: admin.firestore.FieldValue.serverTimestamp(),
+    created_at: administrador.firestore.FieldValue.serverTimestamp(),
   });
-  res.status(201).json({ id: doc.id, slot_id, status: "confirmed" });
+  res.status(201).json({ id: documento.id, slot_id, status: "confirmed" });
 });
-app.delete("/api/bookings/:id", auth(), async (req, res) => {
+aplicacion.delete("/api/bookings/:id", autenticar(), async (req, res) => {
   const { id } = req.params;
-  const b = await db.collection(BOOKINGS).doc(id).get();
-  if (!b.exists) return res.json({ ok: true });
-  const isAdmin = req.user.role === "admin";
-  const can = isAdmin || b.data().user_id === req.user.id;
-  if (!can) return res.status(403).json({ error: "Forbidden" });
-  await db.collection(BOOKINGS).doc(id).update({ status: "canceled" });
+  const docReserva = await baseDeDatos
+    .collection(COLECCION_RESERVAS)
+    .doc(id)
+    .get();
+  if (!docReserva.exists) return res.json({ ok: true });
+  const esAdministrador = req.user.role === "admin";
+  const puede = esAdministrador || docReserva.data().user_id === req.user.id;
+  if (!puede) return res.status(403).json({ error: "Forbidden" });
+  await baseDeDatos
+    .collection(COLECCION_RESERVAS)
+    .doc(id)
+    .update({ status: "canceled" });
   res.json({ ok: true });
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`API Firestore escuchando en :${PORT}`));
+// Puesto de escucha del servidor HTTP
+const PUERTO = parseInt(process.env.PUERTO || process.env.PORT || 3000, 10);
+aplicacion.listen(PUERTO, () =>
+  console.log(`API Firestore escuchando en :${PUERTO}`)
+);

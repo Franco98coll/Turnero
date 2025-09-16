@@ -11,7 +11,8 @@
   "dependencies": {
     "vibe-turnos": "file:..",
     "vue": "^2.7.16",
-    "vuetify": "^2.7.1"
+    "vuetify": "^2.7.1",
+    "vue-router": "^3.6.5"
   },
   "devDependencies": {
     "@vitejs/plugin-vue2": "^2.3.3",
