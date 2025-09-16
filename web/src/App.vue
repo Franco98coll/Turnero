@@ -1,37 +1,105 @@
 <template>
   <v-app>
-    <v-app-bar app color="primary" dark>
+    <v-navigation-drawer
+      v-model="drawerAbierto"
+      app
+      :mini-variant.sync="mini"
+      clipped
+    >
+      <v-list dense>
+        <v-list-item>
+          <v-list-item-avatar>
+            <v-icon color="primary">account_circle</v-icon>
+          </v-list-item-avatar>
+          <v-list-item-content>
+            <v-list-item-title class="font-weight-medium">{{
+              usuario?.name || "Invitado"
+            }}</v-list-item-title>
+            <v-list-item-subtitle>{{
+              usuario?.email || ""
+            }}</v-list-item-subtitle>
+          </v-list-item-content>
+          <v-btn icon @click="mini = !mini"
+            ><v-icon>chevron_left</v-icon></v-btn
+          >
+        </v-list-item>
+        <v-divider class="my-2" />
+
+        <v-list-item v-if="usuario" to="/turnos" link>
+          <v-list-item-icon><v-icon>event</v-icon></v-list-item-icon>
+          <v-list-item-title>Turnos</v-list-item-title>
+        </v-list-item>
+        <v-list-item v-if="usuario" to="/mis-reservas" link>
+          <v-list-item-icon><v-icon>bookmark</v-icon></v-list-item-icon>
+          <v-list-item-title>Mis reservas</v-list-item-title>
+        </v-list-item>
+        <template v-if="usuario?.role === 'admin'">
+          <v-list-item to="/admin" link>
+            <v-list-item-icon><v-icon>build</v-icon></v-list-item-icon>
+            <v-list-item-title>Admin</v-list-item-title>
+          </v-list-item>
+          <v-list-item to="/agenda-admin" link>
+            <v-list-item-icon><v-icon>calendar_today</v-icon></v-list-item-icon>
+            <v-list-item-title>Agenda Admin</v-list-item-title>
+          </v-list-item>
+          <v-list-item to="/pagos" link>
+            <v-list-item-icon><v-icon>payments</v-icon></v-list-item-icon>
+            <v-list-item-title>Pagos</v-list-item-title>
+          </v-list-item>
+          <v-list-item to="/usuarios" link>
+            <v-list-item-icon><v-icon>group</v-icon></v-list-item-icon>
+            <v-list-item-title>Usuarios</v-list-item-title>
+          </v-list-item>
+        </template>
+      </v-list>
+    </v-navigation-drawer>
+
+    <v-app-bar app clipped-left color="primary" dark>
+      <v-app-bar-nav-icon @click.stop="drawerAbierto = !drawerAbierto" />
       <v-toolbar-title>Vibe Turnos</v-toolbar-title>
       <v-spacer />
-      <template v-if="usuario">
-        <router-link class="mr-2" to="/turnos"
-          ><v-btn text>Turnos</v-btn></router-link
-        >
-        <router-link class="mr-2" to="/mis-reservas"
-          ><v-btn text>Mis reservas</v-btn></router-link
-        >
-        <template v-if="usuario.role === 'admin'">
-          <router-link class="mr-2" to="/admin"
-            ><v-btn text>Admin</v-btn></router-link
-          >
-          <router-link class="mr-2" to="/agenda-admin"
-            ><v-btn text>Agenda Admin</v-btn></router-link
-          >
-          <router-link class="mr-2" to="/pagos"
-            ><v-btn text>Pagos</v-btn></router-link
-          >
-          <router-link class="mr-2" to="/usuarios"
-            ><v-btn text>Gestión de usuarios</v-btn></router-link
+      <v-text-field
+        v-if="usuario"
+        dense
+        hide-details
+        solo-inverted
+        flat
+        prepend-inner-icon="search"
+        label="Buscar"
+        style="max-width: 280px"
+      />
+      <v-btn icon @click="alternarTema"><v-icon>brightness_6</v-icon></v-btn>
+      <v-menu v-if="usuario" offset-y>
+        <template v-slot:activator="{ on, attrs }">
+          <v-btn icon v-bind="attrs" v-on="on"
+            ><v-icon>account_circle</v-icon></v-btn
           >
         </template>
-        <v-btn text @click="cerrarSesion">Salir</v-btn>
-      </template>
+        <v-list>
+          <v-list-item>
+            <v-list-item-content>
+              <v-list-item-title>{{ usuario?.name }}</v-list-item-title>
+              <v-list-item-subtitle>{{ usuario?.email }}</v-list-item-subtitle>
+            </v-list-item-content>
+          </v-list-item>
+          <v-divider />
+          <v-list-item @click="cerrarSesion">
+            <v-list-item-icon><v-icon>logout</v-icon></v-list-item-icon>
+            <v-list-item-title>Salir</v-list-item-title>
+          </v-list-item>
+        </v-list>
+      </v-menu>
     </v-app-bar>
 
     <v-main>
-      <v-container>
+      <v-container fluid>
         <div v-if="!usuario">
-          <TarjetaLogin @logueado="alLoguear" />
+          <div
+            class="d-flex align-center justify-center"
+            style="min-height: 60vh"
+          >
+            <TarjetaLogin @logueado="alLoguear" />
+          </div>
         </div>
         <div v-else>
           <router-view />
@@ -42,10 +110,12 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
+import { ref, getCurrentInstance } from "vue";
 import TarjetaLogin from "./components/TarjetaLogin.vue";
 
 const usuario = ref(JSON.parse(localStorage.getItem("user") || "null"));
+const drawerAbierto = ref(true);
+const mini = ref(false);
 
 function alLoguear(datos) {
   localStorage.setItem("token", datos.token);
@@ -57,6 +127,14 @@ function cerrarSesion() {
   localStorage.removeItem("token");
   localStorage.removeItem("user");
   usuario.value = null;
+}
+
+function alternarTema() {
+  const inst = getCurrentInstance();
+  const vm = inst && inst.proxy;
+  if (vm && vm.$vuetify && vm.$vuetify.theme) {
+    vm.$vuetify.theme.dark = !vm.$vuetify.theme.dark;
+  }
 }
 </script>
 
