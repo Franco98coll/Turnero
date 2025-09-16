@@ -34,7 +34,7 @@ router.post("/", auth(), async (req, res) => {
   const { slot_id } = req.body;
   if (!slot_id) return res.status(400).json({ error: "slot_id requerido" });
   try {
-    // Asegurar tabla de pagos
+    // Asegurar tablas de pagos y deadlines
     async function ensurePaymentsTable(pool) {
       await pool.request().query(`
         IF OBJECT_ID('dbo.user_payments', 'U') IS NULL
@@ -51,9 +51,23 @@ router.post("/", auth(), async (req, res) => {
         END
       `);
     }
+    async function ensureDeadlinesTable(pool) {
+      await pool.request().query(`
+        IF OBJECT_ID('dbo.payment_deadlines', 'U') IS NULL
+        BEGIN
+          CREATE TABLE dbo.payment_deadlines (
+            [year] INT NOT NULL,
+            [month] INT NOT NULL,
+            deadline DATE NOT NULL,
+            CONSTRAINT PK_payment_deadlines PRIMARY KEY ([year], [month])
+          );
+        END
+      `);
+    }
 
     const pool = await getPool();
     await ensurePaymentsTable(pool);
+    await ensureDeadlinesTable(pool);
     const t = new sql.Transaction(await pool);
     await t.begin();
     try {
@@ -74,6 +88,7 @@ router.post("/", auth(), async (req, res) => {
         const fechaTurno = new Date(slot.start_time);
         const y = fechaTurno.getFullYear();
         const m = fechaTurno.getMonth() + 1; // 1..12
+        // Consultar pago
         const pagoQ = await request
           .input("uid", sql.Int, req.user.id)
           .input("year", sql.Int, y)
@@ -82,11 +97,37 @@ router.post("/", auth(), async (req, res) => {
             "SELECT paid FROM user_payments WHERE user_id=@uid AND [year]=@year AND [month]=@month"
           );
         const reg = pagoQ.recordset[0];
-        if (!reg || (reg.paid !== true && reg.paid !== 1)) {
-          await t.rollback();
-          return res
-            .status(403)
-            .json({ error: "Debes tener al día el pago del mes del turno" });
+        const pagado = !!(reg && (reg.paid === true || reg.paid === 1));
+        // Consultar deadline (si existe) y bloquear reservas posteriores si no está pagado
+        const dQ = await request
+          .input("dyear", sql.Int, y)
+          .input("dmonth", sql.Int, m)
+          .query(
+            "SELECT deadline FROM payment_deadlines WHERE [year]=@dyear AND [month]=@dmonth"
+          );
+        const deadlineRow = dQ.recordset[0];
+        const hoy = new Date();
+        if (!pagado) {
+          if (deadlineRow) {
+            const limite = new Date(deadlineRow.deadline);
+            // Si ya alcanzó o pasó la fecha límite: bloquear
+            if (
+              new Date(hoy.toDateString()) >= new Date(limite.toDateString())
+            ) {
+              await t.rollback();
+              return res.status(403).json({
+                error:
+                  "Pago vencido: no podés reservar turnos para este mes hasta regularizar el pago",
+              });
+            }
+            // Antes del deadline, permitir reservar aun sin pago
+          } else {
+            // Sin deadline configurado, se mantiene regla estricta
+            await t.rollback();
+            return res
+              .status(403)
+              .json({ error: "Debes tener al día el pago del mes del turno" });
+          }
         }
       }
       if (slot.used >= slot.capacity) {

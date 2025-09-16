@@ -113,6 +113,20 @@ async function ensurePaymentsTable(pool) {
   `);
 }
 
+async function ensureDeadlinesTable(pool) {
+  await pool.request().query(`
+    IF OBJECT_ID('dbo.payment_deadlines', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.payment_deadlines (
+        [year] INT NOT NULL,
+        [month] INT NOT NULL,
+        deadline DATE NOT NULL,
+        CONSTRAINT PK_payment_deadlines PRIMARY KEY ([year], [month])
+      );
+    END
+  `);
+}
+
 // GET /api/users/payments?year=YYYY&month=MM (admin)
 router.get("/payments", auth("admin"), async (req, res) => {
   const year = parseInt(req.query.year, 10);
@@ -161,6 +175,61 @@ router.post("/:id/pay", auth("admin"), async (req, res) => {
           UPDATE SET paid = @paid, paid_at = @paid_at
         WHEN NOT MATCHED THEN
           INSERT (user_id, [year], [month], paid, paid_at) VALUES (@uid, @year, @month, @paid, @paid_at);
+      `);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Error de servidor" });
+  }
+});
+
+// GET /api/users/payments/deadline?year=YYYY&month=MM (admin)
+router.get("/payments/deadline", auth("admin"), async (req, res) => {
+  const year = parseInt(req.query.year, 10);
+  const month = parseInt(req.query.month, 10);
+  if (!year || !month)
+    return res.status(400).json({ error: "year y month requeridos" });
+  try {
+    const pool = await getPool();
+    await ensureDeadlinesTable(pool);
+    const result = await pool
+      .request()
+      .input("year", sql.Int, year)
+      .input("month", sql.Int, month)
+      .query(
+        "SELECT [year], [month], deadline FROM payment_deadlines WHERE [year]=@year AND [month]=@month"
+      );
+    res.json(result.recordset[0] || null);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Error de servidor" });
+  }
+});
+
+// POST /api/users/payments/deadline { year, month, deadline } (admin)
+router.post("/payments/deadline", auth("admin"), async (req, res) => {
+  const { year, month, deadline } = req.body || {};
+  const y = parseInt(year, 10);
+  const m = parseInt(month, 10);
+  if (!y || !m || !deadline)
+    return res.status(400).json({ error: "Parámetros inválidos" });
+  try {
+    const pool = await getPool();
+    await ensureDeadlinesTable(pool);
+    const d = new Date(deadline);
+    if (isNaN(d)) return res.status(400).json({ error: "Fecha inválida" });
+    await pool
+      .request()
+      .input("year", sql.Int, y)
+      .input("month", sql.Int, m)
+      .input("deadline", sql.Date, d).query(`
+        MERGE payment_deadlines AS target
+        USING (SELECT @year AS [year], @month AS [month]) AS src
+        ON (target.[year] = src.[year] AND target.[month] = src.[month])
+        WHEN MATCHED THEN
+          UPDATE SET deadline = @deadline
+        WHEN NOT MATCHED THEN
+          INSERT ([year], [month], deadline) VALUES (@year, @month, @deadline);
       `);
     res.json({ ok: true });
   } catch (e) {

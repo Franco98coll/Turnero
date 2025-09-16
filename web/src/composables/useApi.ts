@@ -165,6 +165,27 @@ export function useApi() {
         body: JSON.stringify({ year, month, paid }),
       })
     ).json();
+  const obtenerDeadline = async (year: number, month: number) => {
+    const r = await fetch(
+      baseApi + `/users/payments/deadline?year=${year}&month=${month}`,
+      { headers: encabezadosAutenticacion() }
+    );
+    if (!r.ok) throw new Error("No se pudo obtener la fecha límite");
+    return r.json();
+  };
+  const guardarDeadline = async (
+    year: number,
+    month: number,
+    deadline: string
+  ) => {
+    const r = await fetch(baseApi + "/users/payments/deadline", {
+      method: "POST",
+      headers: encabezadosAutenticacion(),
+      body: JSON.stringify({ year, month, deadline }),
+    });
+    if (!r.ok) throw new Error("No se pudo guardar la fecha límite");
+    return r.json();
+  };
 
   return {
     baseApi,
@@ -189,5 +210,7 @@ export function useApi() {
     crearReserva,
     cancelarReserva,
     marcarPago,
+    obtenerDeadline,
+    guardarDeadline,
   };
 }

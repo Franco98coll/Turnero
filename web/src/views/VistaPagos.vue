@@ -21,7 +21,30 @@
           style="max-width: 160px"
           class="mr-2"
         />
-        <v-btn color="primary" @click="cargar">Ver</v-btn>
+        <v-btn color="primary" class="mr-2" @click="cargar">Ver</v-btn>
+      </v-col>
+    </v-row>
+
+    <v-row class="mb-2">
+      <v-col cols="12" md="8">
+        <v-alert type="info" outlined dense>
+          Seleccione la fecha límite de pago del mes. Si llega la fecha y un
+          usuario no está marcado como pagado, no podrá reservar turnos para ese
+          mes.
+        </v-alert>
+      </v-col>
+      <v-col cols="12" md="4" class="d-flex justify-end align-center">
+        <v-text-field
+          v-model="deadline"
+          type="date"
+          label="Fecha límite"
+          dense
+          style="max-width: 200px"
+          class="mr-2"
+        />
+        <v-btn color="secondary" @click="guardarFechaLimite"
+          >Guardar límite</v-btn
+        >
       </v-col>
     </v-row>
 
@@ -58,13 +81,20 @@
 import { ref } from "vue";
 import { useApi } from "../composables/useApi";
 
-const { marcarPago, baseApi, obtenerUsuarios } = useApi();
+const {
+  marcarPago,
+  baseApi,
+  obtenerUsuarios,
+  obtenerDeadline,
+  guardarDeadline,
+} = useApi();
 
 const hoy = new Date();
 const anio = ref(hoy.getFullYear());
 const mes = ref(hoy.getMonth() + 1);
 const cargando = ref(false);
 const filas = ref([]);
+const deadline = ref("");
 
 const meses = [
   { text: "Enero", value: 1 },
@@ -91,11 +121,12 @@ const encabezados = [
 async function cargar() {
   cargando.value = true;
   try {
-    const [listaUsuarios, pagosRes] = await Promise.all([
+    const [listaUsuarios, pagosRes, deadlineRes] = await Promise.all([
       obtenerUsuarios(),
       fetch(
         `${baseApi}/users/payments?year=${anio.value}&month=${mes.value}`
       ).then((r) => r.json()),
+      obtenerDeadline(anio.value, mes.value),
     ]);
     const mapaPagos = new Map(pagosRes.map((p) => [p.user_id, p]));
     filas.value = listaUsuarios.map((u) => ({
@@ -104,6 +135,9 @@ async function cargar() {
       email: u.email,
       paid: mapaPagos.get(u.id)?.paid || false,
     }));
+    deadline.value = deadlineRes?.deadline
+      ? String(deadlineRes.deadline).slice(0, 10)
+      : "";
   } finally {
     cargando.value = false;
   }
@@ -113,6 +147,19 @@ async function togglePago(item) {
   const nuevo = !item.paid;
   await marcarPago(String(item.user_id), anio.value, mes.value, nuevo);
   item.paid = nuevo;
+}
+
+async function guardarFechaLimite() {
+  if (!deadline.value) {
+    alert("Seleccione una fecha límite válida");
+    return;
+  }
+  try {
+    await guardarDeadline(anio.value, mes.value, deadline.value);
+    alert("Fecha límite guardada");
+  } catch (e) {
+    alert("No se pudo guardar la fecha límite");
+  }
 }
 
 cargar();
