@@ -96,7 +96,9 @@ function colorDisponibilidad(t) {
 async function cargarTurnos() {
   const q = `?from=${encodeURIComponent(
     fechaDesde.value
-  )}&to=${encodeURIComponent(fechaHasta.value)}`;
+  )}&to=${encodeURIComponent(
+    fechaHasta.value
+  )}&tz_offset=${new Date().getTimezoneOffset()}`;
   const r = await fetch(baseApi + "/slots" + q);
   turnos.value = await r.json();
 }

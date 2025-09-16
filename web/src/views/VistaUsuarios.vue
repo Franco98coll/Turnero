@@ -73,7 +73,6 @@ const mostrarPass = ref(false);
 const form = ref({ id: null, name: "", email: "", role: "user", password: "" });
 
 const encabezados = [
-  { text: "ID", value: "id", width: 80 },
   { text: "Nombre", value: "name" },
   { text: "Email", value: "email" },
   { text: "Rol", value: "role" },

@@ -127,6 +127,37 @@ function autenticar(rolRequerido) {
   };
 }
 
+// ---------------------------
+// Helpers de zona horaria
+// ---------------------------
+function esCadenaConZonaHoraria(s) {
+  return /Z$|[\+\-]\d{2}:?\d{2}$/.test(String(s));
+}
+function parsearFechaCliente(s, tzOffsetMin) {
+  if (s instanceof Date) return s;
+  const str = String(s);
+  // Si trae zona horaria explícita (ISO con Z o +/-hh:mm), delegamos en Date
+  if (esCadenaConZonaHoraria(str)) return new Date(str);
+  // Formato esperado "YYYY-MM-DDTHH:MM"
+  const [fecha, hora] = str.split("T");
+  const [yy, mm, dd] = fecha.split("-").map((n) => parseInt(n, 10));
+  const [hh = 0, mi = 0] = (hora || "").split(":").map((n) => parseInt(n, 10));
+  if (!isFinite(yy) || !isFinite(mm) || !isFinite(dd)) return new Date(str);
+  // Si viene offset del cliente (minutos detrás de UTC), ajustamos a UTC correctamente
+  const off = Number.isFinite(tzOffsetMin) ? Number(tzOffsetMin) : null;
+  if (off !== null) {
+    const ms = Date.UTC(yy, (mm || 1) - 1, dd || 1, hh, mi) + off * 60000;
+    return new Date(ms);
+  }
+  // Fallback: interpreta en zona del servidor (no ideal)
+  return new Date(yy, (mm || 1) - 1, dd || 1, hh, mi, 0, 0);
+}
+function dateEnZonaCliente(y, m, d, hh, mi, tzOffsetMin) {
+  const off = Number(tzOffsetMin) || 0; // minutos detrás de UTC (ej AR: 180)
+  const ms = Date.UTC(y, m, d, hh, mi, 0, 0) + off * 60000;
+  return new Date(ms);
+}
+
 // Endpoint de salud para verificar disponibilidad del servicio
 aplicacion.get("/api/health", (req, res) => {
   res.json({
@@ -304,11 +335,9 @@ aplicacion.get("/api/users/payments", autenticar("admin"), async (req, res) => {
     res.json(items);
   } catch (e) {
     console.error("/users/payments error:", e);
-    res
-      .status(500)
-      .json({
-        error: DEPURAR_ERRORES ? e.stack || e.message : "Error en el servidor",
-      });
+    res.status(500).json({
+      error: DEPURAR_ERRORES ? e.stack || e.message : "Error en el servidor",
+    });
   }
 });
 
@@ -340,13 +369,9 @@ aplicacion.get(
       res.json({ year, month, deadline: ymd });
     } catch (e) {
       console.error("/users/payments/deadline GET error:", e);
-      res
-        .status(500)
-        .json({
-          error: DEPURAR_ERRORES
-            ? e.stack || e.message
-            : "Error en el servidor",
-        });
+      res.status(500).json({
+        error: DEPURAR_ERRORES ? e.stack || e.message : "Error en el servidor",
+      });
     }
   }
 );
@@ -376,13 +401,9 @@ aplicacion.post(
       res.json({ ok: true });
     } catch (e) {
       console.error("/users/payments/deadline POST error:", e);
-      res
-        .status(500)
-        .json({
-          error: DEPURAR_ERRORES
-            ? e.stack || e.message
-            : "Error en el servidor",
-        });
+      res.status(500).json({
+        error: DEPURAR_ERRORES ? e.stack || e.message : "Error en el servidor",
+      });
     }
   }
 );
@@ -393,18 +414,32 @@ aplicacion.post(
 // ----------------------
 aplicacion.get("/api/slots", async (req, res) => {
   try {
-    const { date, from, to } = req.query;
+    const { date, from, to, tz_offset } = req.query;
     let consulta = baseDeDatos.collection(COLECCION_TURNOS);
     if (from && to) {
-      // Parseo local: YYYY-MM-DD a límites del día en hora local
       const [fy, fm, fd] = String(from)
         .split("-")
         .map((n) => parseInt(n, 10));
       const [ty, tm, td] = String(to)
         .split("-")
         .map((n) => parseInt(n, 10));
-      const fromD = new Date(fy, (fm || 1) - 1, fd || 1, 0, 0, 0, 0);
-      const toD = new Date(ty, (tm || 1) - 1, td || 1, 23, 59, 59, 999);
+      const fromD = dateEnZonaCliente(
+        fy,
+        (fm || 1) - 1,
+        fd || 1,
+        0,
+        0,
+        tz_offset
+      );
+      const toD = dateEnZonaCliente(
+        ty,
+        (tm || 1) - 1,
+        td || 1,
+        23,
+        59,
+        59,
+        tz_offset
+      );
       consulta = consulta
         .where("start_time", ">=", fromD)
         .where("start_time", "<=", toD);
@@ -412,8 +447,16 @@ aplicacion.get("/api/slots", async (req, res) => {
       const [y, m, d] = String(date)
         .split("-")
         .map((n) => parseInt(n, 10));
-      const d0 = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
-      const d1 = new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999);
+      const d0 = dateEnZonaCliente(y, (m || 1) - 1, d || 1, 0, 0, tz_offset);
+      const d1 = dateEnZonaCliente(
+        y,
+        (m || 1) - 1,
+        d || 1,
+        23,
+        59,
+        59,
+        tz_offset
+      );
       consulta = consulta
         .where("start_time", ">=", d0)
         .where("start_time", "<=", d1);
@@ -454,21 +497,11 @@ aplicacion.get("/api/slots", async (req, res) => {
   }
 });
 aplicacion.post("/api/slots", autenticar("admin"), async (req, res) => {
-  const { start_time, end_time, capacity } = req.body || {};
+  const { start_time, end_time, capacity, tz_offset } = req.body || {};
   if (!start_time || !end_time || !capacity)
     return res.status(400).json({ error: "Datos incompletos" });
-  // Convertir strings "YYYY-MM-DDTHH:MM" a Date local de forma segura
-  function parseLocalDateTime(s) {
-    if (s instanceof Date) return s;
-    const [datePart, timePart] = String(s).split("T");
-    const [yy, mm, dd] = datePart.split("-").map((n) => parseInt(n, 10));
-    const [hh = 0, mi = 0] = (timePart || "")
-      .split(":")
-      .map((n) => parseInt(n, 10));
-    return new Date(yy, (mm || 1) - 1, dd || 1, hh, mi, 0, 0);
-  }
-  const st = parseLocalDateTime(start_time);
-  const et = parseLocalDateTime(end_time);
+  const st = parsearFechaCliente(start_time, tz_offset);
+  const et = parsearFechaCliente(end_time, tz_offset);
   const documento = await baseDeDatos.collection(COLECCION_TURNOS).add({
     start_time: st,
     end_time: et,
@@ -490,6 +523,7 @@ aplicacion.post("/api/slots/bulk", autenticar("admin"), async (req, res) => {
       slot_minutes = 30,
       capacity = 1,
     } = req.body || {};
+    const tz_offset = req.body?.tz_offset; // minutos detrás de UTC (ej -180 => -3h? cliente reporta 180)
 
     // Validaciones básicas
     if (!start_date || !end_date || !time_start || !time_end)
@@ -504,7 +538,7 @@ aplicacion.post("/api/slots/bulk", autenticar("admin"), async (req, res) => {
       const [y, m, d] = String(s)
         .split("-")
         .map((n) => parseInt(n, 10));
-      return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+      return dateEnZonaCliente(y, (m || 1) - 1, d || 1, 0, 0, tz_offset);
     }
     function parseTimeOnly(s) {
       const [hh = 0, mm = 0] = String(s)
@@ -525,23 +559,21 @@ aplicacion.post("/api/slots/bulk", autenticar("admin"), async (req, res) => {
     for (let d = new Date(dStart); d <= dEnd; d.setDate(d.getDate() + 1)) {
       const dow = d.getDay();
       if (!weekdays.includes(dow)) continue;
-      const dayStart = new Date(
+      const dayStart = dateEnZonaCliente(
         d.getFullYear(),
         d.getMonth(),
         d.getDate(),
         sh,
         sm,
-        0,
-        0
+        tz_offset
       );
-      const dayEnd = new Date(
+      const dayEnd = dateEnZonaCliente(
         d.getFullYear(),
         d.getMonth(),
         d.getDate(),
         eh,
         em,
-        0,
-        0
+        tz_offset
       );
       // Evitar bucle si el fin es antes del inicio
       if (dayEnd <= dayStart) continue;

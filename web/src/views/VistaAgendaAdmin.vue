@@ -88,7 +88,9 @@ async function cargar() {
   cargando.value = true;
   try {
     const r = await fetch(
-      `${baseApi}/slots?date=${encodeURIComponent(fecha.value)}`
+      `${baseApi}/slots?date=${encodeURIComponent(
+        fecha.value
+      )}&tz_offset=${new Date().getTimezoneOffset()}`
     );
     turnos.value = await r.json();
   } finally {

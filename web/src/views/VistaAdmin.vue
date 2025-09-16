@@ -193,7 +193,9 @@ async function cargar() {
   try {
     const q = `?from=${encodeURIComponent(
       fdesde.value
-    )}&to=${encodeURIComponent(fhasta.value)}`;
+    )}&to=${encodeURIComponent(
+      fhasta.value
+    )}&tz_offset=${new Date().getTimezoneOffset()}`;
     const r = await fetch(baseApi + "/slots" + q);
     turnos.value = await r.json();
   } finally {

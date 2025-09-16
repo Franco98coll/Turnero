@@ -83,7 +83,13 @@ export function useApi() {
   const obtenerTurnos = async (fecha?: string) =>
     (
       await fetch(
-        baseApi + "/slots" + (fecha ? `?date=${encodeURIComponent(fecha)}` : "")
+        baseApi +
+          "/slots" +
+          (fecha
+            ? `?date=${encodeURIComponent(
+                fecha
+              )}&tz_offset=${new Date().getTimezoneOffset()}`
+            : "")
       )
     ).json();
   const crearTurno = async (turno: any) =>
@@ -95,6 +101,7 @@ export function useApi() {
           start_time: turno.start,
           end_time: turno.end,
           capacity: turno.capacity,
+          tz_offset: new Date().getTimezoneOffset(),
         }),
       })
     ).json();
@@ -103,7 +110,10 @@ export function useApi() {
       await fetch(baseApi + "/slots/bulk", {
         method: "POST",
         headers: encabezadosAutenticacion(),
-        body: JSON.stringify(parametros),
+        body: JSON.stringify({
+          ...parametros,
+          tz_offset: new Date().getTimezoneOffset(),
+        }),
       })
     ).json();
   const eliminarTurno = async (id: string | number) =>
