@@ -165,6 +165,21 @@ export function useApi() {
         body: JSON.stringify({ year, month, paid }),
       })
     ).json();
+  const obtenerPagos = async (year: number, month: number) => {
+    const r = await fetch(
+      baseApi + `/users/payments?year=${year}&month=${month}`,
+      { headers: encabezadosAutenticacion() }
+    );
+    if (!r.ok) {
+      let msg = "No se pudieron obtener los pagos";
+      try {
+        const body = await r.json();
+        msg = body?.error || msg;
+      } catch {}
+      throw new Error(msg);
+    }
+    return r.json();
+  };
   const obtenerDeadline = async (year: number, month: number) => {
     const r = await fetch(
       baseApi + `/users/payments/deadline?year=${year}&month=${month}`,
@@ -210,6 +225,7 @@ export function useApi() {
     crearReserva,
     cancelarReserva,
     marcarPago,
+    obtenerPagos,
     obtenerDeadline,
     guardarDeadline,
   };

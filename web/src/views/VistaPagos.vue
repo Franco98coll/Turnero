@@ -85,6 +85,7 @@ const {
   marcarPago,
   baseApi,
   obtenerUsuarios,
+  obtenerPagos,
   obtenerDeadline,
   guardarDeadline,
 } = useApi();
@@ -123,9 +124,7 @@ async function cargar() {
   try {
     const [listaUsuarios, pagosRes, deadlineRes] = await Promise.all([
       obtenerUsuarios(),
-      fetch(
-        `${baseApi}/users/payments?year=${anio.value}&month=${mes.value}`
-      ).then((r) => r.json()),
+      obtenerPagos(anio.value, mes.value),
       obtenerDeadline(anio.value, mes.value),
     ]);
     const mapaPagos = new Map(pagosRes.map((p) => [p.user_id, p]));
