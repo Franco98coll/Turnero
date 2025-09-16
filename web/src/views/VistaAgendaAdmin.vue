@@ -62,7 +62,7 @@ import { ref } from "vue";
 import { useApi } from "../composables/useApi";
 import { formatearFechaHora } from "../composables/useFecha";
 
-const { baseApi } = useApi();
+const { baseApi, obtenerAsistentes } = useApi();
 
 const fecha = ref(new Date().toISOString().slice(0, 10));
 const turnos = ref([]);
@@ -89,8 +89,15 @@ async function cargar() {
 }
 
 async function verAsistentes(item) {
-  const r = await fetch(`${baseApi}/slots/${item.id}/attendees`);
-  asistentes.value = await r.json();
+  try {
+    const lista = await obtenerAsistentes(String(item.id));
+    asistentes.value = Array.isArray(lista) ? lista : [];
+  } catch (e) {
+    const msg =
+      e && e.message ? e.message : "No se pudieron cargar los asistentes";
+    alert(msg);
+    asistentes.value = [];
+  }
   dialog.value = true;
 }
 

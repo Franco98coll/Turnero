@@ -113,12 +113,20 @@ export function useApi() {
         headers: encabezadosAutenticacion(),
       })
     ).json();
-  const obtenerAsistentes = async (turnoId: string) =>
-    (
-      await fetch(baseApi + "/slots/" + turnoId + "/attendees", {
-        headers: encabezadosAutenticacion(),
-      })
-    ).json();
+  const obtenerAsistentes = async (turnoId: string) => {
+    const r = await fetch(baseApi + "/slots/" + turnoId + "/attendees", {
+      headers: encabezadosAutenticacion(),
+    });
+    if (!r.ok) {
+      let msg = "No se pudieron cargar los asistentes";
+      try {
+        const body = await r.json();
+        msg = body?.error || msg;
+      } catch {}
+      throw new Error(msg);
+    }
+    return r.json();
+  };
 
   // Reservas
   const obtenerReservas = async () =>
