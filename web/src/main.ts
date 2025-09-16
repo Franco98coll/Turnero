@@ -4,6 +4,7 @@ import "vuetify/dist/vuetify.min.css";
 import "sweetalert2/dist/sweetalert2.min.css";
 import App from "./App.vue";
 import router from "./router";
+import { io } from "socket.io-client";
 
 Vue.use(Vuetify);
 
@@ -33,6 +34,10 @@ const vuetify = new Vuetify({
     dark: false,
   },
 });
+
+// Socket global para toda la app
+const socket = io((window as any).__API_BASE__ || "");
+(window as any).__SOCKET__ = socket;
 
 new Vue({
   vuetify,

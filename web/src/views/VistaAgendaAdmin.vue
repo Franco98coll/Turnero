@@ -63,7 +63,7 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
+import { ref, onMounted, onBeforeUnmount } from "vue";
 import { useApi } from "../composables/useApi";
 import { formatearFechaHora } from "../composables/useFecha";
 import { useNotify } from "../composables/useNotify";
@@ -110,5 +110,28 @@ async function verAsistentes(item) {
   dialog.value = true;
 }
 
-cargar();
+let sock;
+onMounted(() => {
+  cargar();
+  sock = window.__SOCKET__;
+  if (sock) {
+    const refresh = () => cargar();
+    sock.on("slot:created", refresh);
+    sock.on("slot:deleted", refresh);
+    sock.on("slot:bulkCreated", refresh);
+    sock.on("slot:cleared", refresh);
+    sock.on("booking:created", refresh);
+    sock.on("booking:canceled", refresh);
+  }
+});
+onBeforeUnmount(() => {
+  if (sock) {
+    sock.off("slot:created");
+    sock.off("slot:deleted");
+    sock.off("slot:bulkCreated");
+    sock.off("slot:cleared");
+    sock.off("booking:created");
+    sock.off("booking:canceled");
+  }
+});
 </script>

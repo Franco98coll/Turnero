@@ -45,7 +45,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useApi } from "../composables/useApi";
 import { formatearFechaHora } from "../composables/useFecha";
 import { useNotify } from "../composables/useNotify";
@@ -106,5 +106,22 @@ async function cancelar(item) {
   }
 }
 
-cargar();
+let sock;
+onMounted(() => {
+  cargar();
+  sock = window.__SOCKET__;
+  if (sock) {
+    const refresh = () => cargar();
+    sock.on("booking:created", refresh);
+    sock.on("booking:canceled", refresh);
+    sock.on("slot:deleted", refresh);
+  }
+});
+onBeforeUnmount(() => {
+  if (sock) {
+    sock.off("booking:created");
+    sock.off("booking:canceled");
+    sock.off("slot:deleted");
+  }
+});
 </script>

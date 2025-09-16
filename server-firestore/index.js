@@ -57,6 +57,16 @@ const baseDeDatos = administrador.firestore();
 const aplicacion = express();
 aplicacion.use(cors());
 aplicacion.use(express.json());
+// Crear servidor HTTP y Socket.IO
+const http = require("http");
+const servidor = http.createServer(aplicacion);
+const { Server } = require("socket.io");
+const io = new Server(servidor, {
+  cors: { origin: "*" },
+});
+io.on("connection", (socket) => {
+  socket.on("disconnect", () => {});
+});
 
 // -------------------------------
 // Configuración y constantes APP
@@ -507,6 +517,13 @@ aplicacion.post("/api/slots", autenticar("admin"), async (req, res) => {
     end_time: et,
     capacity,
   });
+  const payload = {
+    id: documento.id,
+    start_time: st.toISOString(),
+    end_time: et.toISOString(),
+    capacity,
+  };
+  io.emit("slot:created", payload);
   res.status(201).json({ id: documento.id, start_time, end_time, capacity });
 });
 
@@ -607,6 +624,7 @@ aplicacion.post("/api/slots/bulk", autenticar("admin"), async (req, res) => {
       creados += parte.length;
     }
 
+    if (creados > 0) io.emit("slot:bulkCreated", { created: creados });
     res.json({ created: creados });
   } catch (e) {
     console.error("/slots/bulk error:", e);
@@ -625,6 +643,7 @@ aplicacion.delete("/api/slots/:id", autenticar("admin"), async (req, res) => {
   reservas.docs.forEach((docReserva) => lote.delete(docReserva.ref));
   lote.delete(baseDeDatos.collection(COLECCION_TURNOS).doc(id));
   await lote.commit();
+  io.emit("slot:deleted", { id });
   res.json({ ok: true });
 });
 aplicacion.delete("/api/slots", autenticar("admin"), async (req, res) => {
@@ -639,6 +658,7 @@ aplicacion.delete("/api/slots", autenticar("admin"), async (req, res) => {
     lote.delete(dTurno.ref);
   }
   await lote.commit();
+  io.emit("slot:cleared");
   res.json({ ok: true });
 });
 
@@ -825,6 +845,12 @@ aplicacion.post("/api/bookings", autenticar(), async (req, res) => {
     status: "confirmed",
     created_at: administrador.firestore.FieldValue.serverTimestamp(),
   });
+  // Notificar cambios de cupo y nueva reserva
+  io.emit("booking:created", {
+    id: documento.id,
+    slot_id,
+    user_id: req.user.id,
+  });
   res.status(201).json({ id: documento.id, slot_id, status: "confirmed" });
 });
 aplicacion.delete("/api/bookings/:id", autenticar(), async (req, res) => {
@@ -841,11 +867,12 @@ aplicacion.delete("/api/bookings/:id", autenticar(), async (req, res) => {
     .collection(COLECCION_RESERVAS)
     .doc(id)
     .update({ status: "canceled" });
+  io.emit("booking:canceled", { id });
   res.json({ ok: true });
 });
 
 // Puesto de escucha del servidor HTTP
 const PUERTO = parseInt(process.env.PUERTO || process.env.PORT || 3000, 10);
-aplicacion.listen(PUERTO, () =>
-  console.log(`API Firestore escuchando en :${PUERTO}`)
+servidor.listen(PUERTO, () =>
+  console.log(`API Firestore + Socket.IO escuchando en :${PUERTO}`)
 );
