@@ -93,3 +93,78 @@ router.delete("/:id", auth("admin"), async (req, res) => {
 });
 
 module.exports = router;
+
+// --- Pagos ---
+// Helpers
+async function ensurePaymentsTable(pool) {
+  await pool.request().query(`
+    IF OBJECT_ID('dbo.user_payments', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.user_payments (
+        user_id INT NOT NULL,
+        [year] INT NOT NULL,
+        [month] INT NOT NULL,
+        paid BIT NOT NULL DEFAULT 0,
+        paid_at DATETIME2 NULL,
+        CONSTRAINT PK_user_payments PRIMARY KEY (user_id, [year], [month]),
+        CONSTRAINT FK_user_payments_users FOREIGN KEY (user_id) REFERENCES dbo.users(id) ON DELETE CASCADE
+      );
+    END
+  `);
+}
+
+// GET /api/users/payments?year=YYYY&month=MM (admin)
+router.get("/payments", auth("admin"), async (req, res) => {
+  const year = parseInt(req.query.year, 10);
+  const month = parseInt(req.query.month, 10);
+  if (!year || !month)
+    return res.status(400).json({ error: "year y month requeridos" });
+  try {
+    const pool = await getPool();
+    await ensurePaymentsTable(pool);
+    const result = await pool
+      .request()
+      .input("year", sql.Int, year)
+      .input("month", sql.Int, month)
+      .query(
+        "SELECT user_id, [year], [month], paid, paid_at FROM user_payments WHERE [year]=@year AND [month]=@month"
+      );
+    res.json(result.recordset);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Error de servidor" });
+  }
+});
+
+// POST /api/users/:id/pay { year, month, paid }
+router.post("/:id/pay", auth("admin"), async (req, res) => {
+  const userId = parseInt(req.params.id, 10);
+  const { year, month, paid } = req.body || {};
+  if (!userId || !year || !month || typeof paid !== "boolean")
+    return res.status(400).json({ error: "Parámetros inválidos" });
+  try {
+    const pool = await getPool();
+    await ensurePaymentsTable(pool);
+    const now = new Date();
+    // UPSERT
+    const up = await pool
+      .request()
+      .input("uid", sql.Int, userId)
+      .input("year", sql.Int, year)
+      .input("month", sql.Int, month)
+      .input("paid", sql.Bit, paid ? 1 : 0)
+      .input("paid_at", sql.DateTime2, paid ? now : null).query(`
+        MERGE user_payments AS target
+        USING (SELECT @uid AS user_id, @year AS [year], @month AS [month]) AS src
+        ON (target.user_id = src.user_id AND target.[year] = src.[year] AND target.[month] = src.[month])
+        WHEN MATCHED THEN
+          UPDATE SET paid = @paid, paid_at = @paid_at
+        WHEN NOT MATCHED THEN
+          INSERT (user_id, [year], [month], paid, paid_at) VALUES (@uid, @year, @month, @paid, @paid_at);
+      `);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Error de servidor" });
+  }
+});

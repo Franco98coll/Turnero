@@ -29,12 +29,31 @@ router.get("/", auth(), async (req, res) => {
   }
 });
 
-// POST /api/bookings -> create booking for a slot, if capacity remains
+// POST /api/bookings -> create booking for a slot, if capacity remains and mes pagado
 router.post("/", auth(), async (req, res) => {
   const { slot_id } = req.body;
   if (!slot_id) return res.status(400).json({ error: "slot_id requerido" });
   try {
+    // Asegurar tabla de pagos
+    async function ensurePaymentsTable(pool) {
+      await pool.request().query(`
+        IF OBJECT_ID('dbo.user_payments', 'U') IS NULL
+        BEGIN
+          CREATE TABLE dbo.user_payments (
+            user_id INT NOT NULL,
+            [year] INT NOT NULL,
+            [month] INT NOT NULL,
+            paid BIT NOT NULL DEFAULT 0,
+            paid_at DATETIME2 NULL,
+            CONSTRAINT PK_user_payments PRIMARY KEY (user_id, [year], [month]),
+            CONSTRAINT FK_user_payments_users FOREIGN KEY (user_id) REFERENCES dbo.users(id) ON DELETE CASCADE
+          );
+        END
+      `);
+    }
+
     const pool = await getPool();
+    await ensurePaymentsTable(pool);
     const t = new sql.Transaction(await pool);
     await t.begin();
     try {
@@ -49,6 +68,26 @@ router.post("/", auth(), async (req, res) => {
       if (!slot) {
         await t.rollback();
         return res.status(404).json({ error: "Slot no encontrado" });
+      }
+      // Validar pago del mes del turno para usuarios no admin
+      if (req.user.role !== "admin") {
+        const fechaTurno = new Date(slot.start_time);
+        const y = fechaTurno.getFullYear();
+        const m = fechaTurno.getMonth() + 1; // 1..12
+        const pagoQ = await request
+          .input("uid", sql.Int, req.user.id)
+          .input("year", sql.Int, y)
+          .input("month", sql.Int, m)
+          .query(
+            "SELECT paid FROM user_payments WHERE user_id=@uid AND [year]=@year AND [month]=@month"
+          );
+        const reg = pagoQ.recordset[0];
+        if (!reg || (reg.paid !== true && reg.paid !== 1)) {
+          await t.rollback();
+          return res
+            .status(403)
+            .json({ error: "Debes tener al día el pago del mes del turno" });
+        }
       }
       if (slot.used >= slot.capacity) {
         await t.rollback();

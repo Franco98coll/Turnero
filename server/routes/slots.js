@@ -100,6 +100,25 @@ router.delete("/", auth("admin"), async (req, res) => {
 
 module.exports = router;
 
+// GET /api/slots/:id/attendees (admin)
+router.get("/:id/attendees", auth("admin"), async (req, res) => {
+  try {
+    const pool = await getPool();
+    const result = await pool
+      .request()
+      .input("id", sql.Int, parseInt(req.params.id, 10)).query(`
+        SELECT b.id as booking_id, u.id as user_id, u.name, u.email
+        FROM bookings b
+        JOIN users u ON u.id = b.user_id
+        WHERE b.slot_id = @id AND b.status='confirmed'
+        ORDER BY u.name ASC
+      `);
+    res.json(result.recordset);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Error de servidor" });
+  }
+});
 // POST /api/slots/bulk (admin)
 // Payload esperado:
 // {
