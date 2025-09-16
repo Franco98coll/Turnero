@@ -73,6 +73,7 @@ const DEPURAR_ERRORES =
 const COLECCION_USUARIOS = "users";
 const COLECCION_TURNOS = "slots";
 const COLECCION_RESERVAS = "bookings";
+const COLECCION_DEADLINES = "payment_deadlines"; // { id: YYYY-MM, deadline: Date }
 
 // ---------------------------------
 // Funciones de utilidad (helpers)
@@ -285,6 +286,106 @@ aplicacion.post("/api/users/:id/pay", autenticar("admin"), async (req, res) => {
   await referencia.update({ paid_months: Array.from(set) });
   res.json({ ok: true, paid_months: Array.from(set) });
 });
+
+// Listado de pagos por mes (admin): devuelve [{ user_id, year, month, paid }]
+aplicacion.get("/api/users/payments", autenticar("admin"), async (req, res) => {
+  try {
+    const year = parseInt(req.query.year, 10);
+    const month = parseInt(req.query.month, 10);
+    if (!year || !month)
+      return res.status(400).json({ error: "year y month requeridos" });
+    const clave = `${year}-${rellenar2(month)}`;
+    const snap = await baseDeDatos.collection(COLECCION_USUARIOS).get();
+    const items = snap.docs.map((d) => {
+      const u = d.data();
+      const arr = Array.isArray(u.paid_months) ? u.paid_months : [];
+      return { user_id: d.id, year, month, paid: arr.includes(clave) };
+    });
+    res.json(items);
+  } catch (e) {
+    console.error("/users/payments error:", e);
+    res
+      .status(500)
+      .json({
+        error: DEPURAR_ERRORES ? e.stack || e.message : "Error en el servidor",
+      });
+  }
+});
+
+// Obtener fecha límite (admin): { year, month, deadline: 'YYYY-MM-DD' } | null
+aplicacion.get(
+  "/api/users/payments/deadline",
+  autenticar("admin"),
+  async (req, res) => {
+    try {
+      const year = parseInt(req.query.year, 10);
+      const month = parseInt(req.query.month, 10);
+      if (!year || !month)
+        return res.status(400).json({ error: "year y month requeridos" });
+      const id = `${year}-${rellenar2(month)}`;
+      const doc = await baseDeDatos
+        .collection(COLECCION_DEADLINES)
+        .doc(id)
+        .get();
+      if (!doc.exists) return res.json(null);
+      const data = doc.data();
+      let d = data.deadline;
+      if (d && d.toDate) d = d.toDate();
+      const ymd =
+        d instanceof Date
+          ? `${d.getFullYear()}-${rellenar2(d.getMonth() + 1)}-${rellenar2(
+              d.getDate()
+            )}`
+          : String(d);
+      res.json({ year, month, deadline: ymd });
+    } catch (e) {
+      console.error("/users/payments/deadline GET error:", e);
+      res
+        .status(500)
+        .json({
+          error: DEPURAR_ERRORES
+            ? e.stack || e.message
+            : "Error en el servidor",
+        });
+    }
+  }
+);
+
+// Guardar fecha límite (admin): body { year, month, deadline: 'YYYY-MM-DD' }
+aplicacion.post(
+  "/api/users/payments/deadline",
+  autenticar("admin"),
+  async (req, res) => {
+    try {
+      const { year, month, deadline } = req.body || {};
+      const y = parseInt(year, 10);
+      const m = parseInt(month, 10);
+      if (!y || !m || !deadline)
+        return res.status(400).json({ error: "Parámetros inválidos" });
+      const [yy, mm, dd] = String(deadline)
+        .split("-")
+        .map((n) => parseInt(n, 10));
+      const fecha = new Date(yy, (mm || 1) - 1, dd || 1, 0, 0, 0, 0);
+      if (isNaN(fecha))
+        return res.status(400).json({ error: "Fecha inválida" });
+      const id = `${y}-${rellenar2(m)}`;
+      await baseDeDatos
+        .collection(COLECCION_DEADLINES)
+        .doc(id)
+        .set({ deadline: fecha }, { merge: true });
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("/users/payments/deadline POST error:", e);
+      res
+        .status(500)
+        .json({
+          error: DEPURAR_ERRORES
+            ? e.stack || e.message
+            : "Error en el servidor",
+        });
+    }
+  }
+);
 
 // Slots
 // ----------------------
@@ -617,50 +718,66 @@ aplicacion.get("/api/bookings", autenticar(), async (req, res) => {
 aplicacion.post("/api/bookings", autenticar(), async (req, res) => {
   const { slot_id } = req.body || {};
   if (!slot_id) return res.status(400).json({ error: "slot_id requerido" });
-  // Reglas de pago: si el usuario debe y pasaron 7 días de la fecha de pago del mes actual, bloquear
-  try {
-    const docUsuario = await baseDeDatos
-      .collection(COLECCION_USUARIOS)
-      .doc(req.user.id)
-      .get();
-    if (docUsuario.exists) {
-      const usuario = docUsuario.data();
-      const fechaVencimiento = usuario.payment_due_date; // YYYY-MM-DD
-      const mesesPagos = Array.isArray(usuario.paid_months)
-        ? usuario.paid_months
-        : [];
-      const ahora = new Date();
-      const claveMesActual = claveMes(ahora);
-      if (fechaVencimiento && !mesesPagos.includes(claveMesActual)) {
-        const [yy, mm, dd] = String(fechaVencimiento)
-          .split("-")
-          .map((n) => parseInt(n, 10));
-        const fechaDelMes = new Date(
-          ahora.getFullYear(),
-          (mm || 1) - 1,
-          dd || 1,
-          0,
-          0,
-          0,
-          0
-        );
-        const gracia = new Date(fechaDelMes.getTime() + 7 * 86400000);
-        if (ahora > gracia) {
-          return res.status(402).json({
-            error: "Pago vencido. Regularice su cuota para reservar turnos.",
-          });
-        }
-      }
-    }
-  } catch (e) {
-    console.warn("check payment rule error", e.message);
-  }
+  // Obtener turno para conocer el mes/año de la reserva
   const docTurno = await baseDeDatos
     .collection(COLECCION_TURNOS)
     .doc(slot_id)
     .get();
   if (!docTurno.exists)
     return res.status(404).json({ error: "Slot no encontrado" });
+  // Validación de pago según fecha límite del mes del turno
+  try {
+    const datosTurno = docTurno.data();
+    const inicio = datosTurno.start_time?.toDate
+      ? datosTurno.start_time.toDate()
+      : new Date(datosTurno.start_time);
+    const y = inicio.getFullYear();
+    const m = inicio.getMonth() + 1; // 1..12
+    const clave = `${y}-${rellenar2(m)}`;
+    const docUsuario = await baseDeDatos
+      .collection(COLECCION_USUARIOS)
+      .doc(req.user.id)
+      .get();
+    const mesesPagos =
+      docUsuario.exists && Array.isArray(docUsuario.data().paid_months)
+        ? docUsuario.data().paid_months
+        : [];
+    const pagado = mesesPagos.includes(clave);
+    if (!pagado) {
+      const docDeadline = await baseDeDatos
+        .collection(COLECCION_DEADLINES)
+        .doc(clave)
+        .get();
+      if (docDeadline.exists) {
+        let d = docDeadline.data().deadline;
+        if (d && d.toDate) d = d.toDate();
+        const hoy = new Date();
+        const d0 = new Date(
+          d.getFullYear(),
+          d.getMonth(),
+          d.getDate(),
+          0,
+          0,
+          0,
+          0
+        );
+        if (hoy >= d0) {
+          return res.status(403).json({
+            error:
+              "Pago vencido: no podés reservar turnos para este mes hasta regularizar el pago",
+          });
+        }
+        // Antes del deadline: permitir aun sin pago
+      } else {
+        // Sin fecha límite configurada: regla estricta → bloquear si no pagó
+        return res
+          .status(403)
+          .json({ error: "Debes tener al día el pago del mes del turno" });
+      }
+    }
+  } catch (e) {
+    console.warn("check payment rule error", e.message);
+  }
   const capacidad = docTurno.data().capacity || 0;
   const ocupados = (
     await baseDeDatos
