@@ -9,12 +9,14 @@ export interface UsuarioMinimo {
 declare const __API_BASE__: string | undefined;
 
 export function useApi() {
-  const baseApi =
-    (__API_BASE__ && __API_BASE__ !== ""
-      ? __API_BASE__
-      : window.location && window.location.origin
-      ? window.location.origin
-      : "") + "/api";
+  const override = (window as any).__API_BASE__ as string | undefined;
+  const baseOrigen =
+    (override && override !== "")
+      ? override
+      : (__API_BASE__ && __API_BASE__ !== ""
+          ? __API_BASE__
+          : (window.location && window.location.origin ? window.location.origin : ""));
+  const baseApi = baseOrigen + "/api";
 
   let tokenActual = localStorage.getItem("token") || "";
 
