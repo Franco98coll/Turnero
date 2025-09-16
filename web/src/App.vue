@@ -129,11 +129,26 @@ function cerrarSesion() {
   usuario.value = null;
 }
 
+const inst = getCurrentInstance();
+const vm = inst && inst.proxy;
+
+// Inicializar tema desde localStorage o media query
+if (vm && vm.$vuetify && vm.$vuetify.theme) {
+  const guardado = localStorage.getItem("tema_oscuro");
+  if (guardado === null) {
+    const prefiereOscuro =
+      window.matchMedia &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches;
+    vm.$vuetify.theme.dark = !!prefiereOscuro;
+  } else {
+    vm.$vuetify.theme.dark = guardado === "1";
+  }
+}
+
 function alternarTema() {
-  const inst = getCurrentInstance();
-  const vm = inst && inst.proxy;
   if (vm && vm.$vuetify && vm.$vuetify.theme) {
     vm.$vuetify.theme.dark = !vm.$vuetify.theme.dark;
+    localStorage.setItem("tema_oscuro", vm.$vuetify.theme.dark ? "1" : "0");
   }
 }
 </script>
