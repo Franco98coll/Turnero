@@ -125,7 +125,11 @@ export function useApi() {
       } catch {}
       throw new Error(msg);
     }
-    return r.json();
+    const data = await r.json();
+    if (Array.isArray(data)) return data;
+    if (data && Array.isArray((data as any).attendees))
+      return (data as any).attendees;
+    return [];
   };
 
   // Reservas

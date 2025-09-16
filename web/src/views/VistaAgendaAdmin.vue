@@ -96,8 +96,7 @@ async function cargar() {
 
 async function verAsistentes(item) {
   try {
-    const lista = await obtenerAsistentes(String(item.id));
-    asistentes.value = Array.isArray(lista) ? lista : [];
+    asistentes.value = await obtenerAsistentes(String(item.id));
   } catch (e) {
     const msg =
       e && e.message ? e.message : "No se pudieron cargar los asistentes";
