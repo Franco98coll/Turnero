@@ -66,8 +66,10 @@
 import { ref } from "vue";
 import { useApi } from "../composables/useApi";
 import { formatearFechaHora } from "../composables/useFecha";
+import { useNotify } from "../composables/useNotify";
 
 const { baseApi, obtenerAsistentes } = useApi();
+const { toast } = useNotify();
 
 const fecha = ref(new Date().toISOString().slice(0, 10));
 const turnos = ref([]);
@@ -100,7 +102,7 @@ async function verAsistentes(item) {
   } catch (e) {
     const msg =
       e && e.message ? e.message : "No se pudieron cargar los asistentes";
-    alert(msg);
+    toast(msg, "error");
     asistentes.value = [];
   }
   dialog.value = true;

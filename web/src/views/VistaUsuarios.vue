@@ -59,9 +59,11 @@
 <script setup>
 import { ref } from "vue";
 import { useApi } from "../composables/useApi";
+import { useNotify } from "../composables/useNotify";
 
 const { obtenerUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario } =
   useApi();
+const { confirmAction, toast } = useNotify();
 
 const usuarios = ref([]);
 const cargando = ref(false);
@@ -112,7 +114,7 @@ async function guardar() {
       };
       if (form.value.password) payload.password = form.value.password;
       const r = await actualizarUsuario(form.value.id, payload);
-      if (r?.error) return alert(r.error);
+      if (r?.error) return toast(r.error, "error");
     } else {
       const r = await crearUsuario({
         name: form.value.name,
@@ -120,9 +122,10 @@ async function guardar() {
         role: form.value.role,
         password: form.value.password,
       });
-      if (r?.error) return alert(r.error);
+      if (r?.error) return toast(r.error, "error");
     }
     dialog.value = false;
+    toast("Usuario guardado", "success");
     await cargar();
   } finally {
     guardando.value = false;
@@ -130,9 +133,16 @@ async function guardar() {
 }
 
 async function borrar(item) {
-  if (!confirm("¿Eliminar usuario?")) return;
+  const ok = await confirmAction({
+    title: "Eliminar usuario",
+    text: `¿Eliminar a ${item.name}?`,
+    icon: "warning",
+    confirmButtonText: "Eliminar",
+  });
+  if (!ok) return;
   const r = await eliminarUsuario(item.id);
-  if (r?.error) return alert(r.error);
+  if (r?.error) return toast(r.error, "error");
+  toast("Usuario eliminado", "success");
   await cargar();
 }
 

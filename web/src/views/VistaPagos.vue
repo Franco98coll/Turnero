@@ -80,6 +80,7 @@
 <script setup>
 import { ref } from "vue";
 import { useApi } from "../composables/useApi";
+import { useNotify } from "../composables/useNotify";
 
 const {
   marcarPago,
@@ -89,6 +90,7 @@ const {
   obtenerDeadline,
   guardarDeadline,
 } = useApi();
+const { confirmAction, toast } = useNotify();
 
 const hoy = new Date();
 const anio = ref(hoy.getFullYear());
@@ -140,9 +142,10 @@ async function cargar() {
   } catch (e) {
     const msg =
       e && e.message ? e.message : "No se pudo cargar la información de pagos";
-    alert(
+    toast(
       msg +
-        "\nVerificá que el backend tenga los endpoints /api/users/payments y /api/users/payments/deadline."
+        "\nVerificá endpoints /api/users/payments y /api/users/payments/deadline.",
+      "error"
     );
     filas.value = [];
     deadline.value = "";
@@ -153,20 +156,29 @@ async function cargar() {
 
 async function togglePago(item) {
   const nuevo = !item.paid;
+  // No requiere confirmación: es un toggle de estado
   await marcarPago(String(item.user_id), anio.value, mes.value, nuevo);
   item.paid = nuevo;
+  toast(nuevo ? "Marcado como pagado" : "Marcado como pendiente", "success");
 }
 
 async function guardarFechaLimite() {
   if (!deadline.value) {
-    alert("Seleccione una fecha límite válida");
+    toast("Seleccione una fecha límite válida", "warning");
     return;
   }
   try {
+    const ok = await confirmAction({
+      title: "Guardar fecha límite",
+      text: `Se aplicará para ${meses[mes.value - 1].text} ${anio.value}.`,
+      icon: "question",
+      confirmButtonText: "Guardar",
+    });
+    if (!ok) return;
     await guardarDeadline(anio.value, mes.value, deadline.value);
-    alert("Fecha límite guardada");
+    toast("Fecha límite guardada", "success");
   } catch (e) {
-    alert("No se pudo guardar la fecha límite");
+    toast("No se pudo guardar la fecha límite", "error");
   }
 }
 

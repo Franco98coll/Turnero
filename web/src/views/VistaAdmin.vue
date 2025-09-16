@@ -154,8 +154,10 @@
 import { ref } from "vue";
 import { useApi } from "../composables/useApi";
 import { formatearFechaHora } from "../composables/useFecha";
+import { useNotify } from "../composables/useNotify";
 
 const { crearTurno, eliminarTurno, crearTurnosEnBloque, baseApi } = useApi();
+const { confirmAction, toast } = useNotify();
 
 const fdesde = ref(new Date().toISOString().slice(0, 10));
 const fhasta = ref(
@@ -208,8 +210,9 @@ async function crear() {
       capacity: nuevo.value.capacidad,
     };
     const r = await crearTurno(body);
-    if (r?.error) return alert(r.error);
+    if (r?.error) return toast(r.error || "Error al crear", "error");
     dialogCrear.value = false;
+    toast("Turno creado", "success");
     await cargar();
   } finally {
     guardando.value = false;
@@ -217,9 +220,16 @@ async function crear() {
 }
 
 async function borrar(item) {
-  if (!confirm("¿Eliminar turno?")) return;
+  const ok = await confirmAction({
+    title: "Eliminar turno",
+    text: "Esta acción no se puede deshacer.",
+    icon: "warning",
+    confirmButtonText: "Eliminar",
+  });
+  if (!ok) return;
   const r = await eliminarTurno(item.id);
-  if (r?.error) return alert(r.error);
+  if (r?.error) return toast(r.error || "No se pudo eliminar", "error");
+  toast("Turno eliminado", "success");
   await cargar();
 }
 
@@ -236,8 +246,9 @@ async function crearMasivo() {
       capacity: masivo.value.capacidad,
     };
     const r = await crearTurnosEnBloque(payload);
-    if (r?.error) return alert(r.error);
+    if (r?.error) return toast(r.error || "Error en alta masiva", "error");
     dialogMasivo.value = false;
+    toast("Turnos creados", "success");
     await cargar();
   } finally {
     guardandoMasivo.value = false;

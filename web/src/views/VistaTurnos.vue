@@ -57,8 +57,10 @@
 import { ref, computed } from "vue";
 import { useApi } from "../composables/useApi";
 import { formatearFechaHora } from "../composables/useFecha";
+import { useNotify } from "../composables/useNotify";
 
 const { obtenerTurnos, crearReserva, baseApi } = useApi();
+const { toast } = useNotify();
 
 const hoyISO = new Date().toISOString().slice(0, 10);
 const fechaDesde = ref(hoyISO);
@@ -103,7 +105,8 @@ async function reservar(turno) {
   try {
     reservando.value = true;
     const resp = await crearReserva(turno.id);
-    if (resp?.error) return alert(resp.error);
+    if (resp?.error) return toast(resp.error, "error");
+    toast("Reserva creada", "success");
     await cargarTurnos();
   } finally {
     reservando.value = false;

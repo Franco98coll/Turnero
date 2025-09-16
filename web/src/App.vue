@@ -9,7 +9,19 @@
       <v-list dense>
         <v-list-item>
           <v-list-item-avatar>
-            <v-icon color="primary">account_circle</v-icon>
+            <template v-if="logoOk">
+              <v-img
+                src="/logo.png"
+                alt="Phoenix Gym"
+                max-width="40"
+                max-height="40"
+                contain
+                @error="logoOk = false"
+              />
+            </template>
+            <template v-else>
+              <v-icon color="primary">account_circle</v-icon>
+            </template>
           </v-list-item-avatar>
           <v-list-item-content>
             <v-list-item-title class="font-weight-medium">{{
@@ -56,7 +68,7 @@
 
     <v-app-bar app clipped-left color="primary" dark>
       <v-app-bar-nav-icon @click.stop="drawerAbierto = !drawerAbierto" />
-      <v-toolbar-title>Vibe Turnos</v-toolbar-title>
+      <v-toolbar-title>Phoenix Gym Turnos</v-toolbar-title>
       <v-spacer />
       <v-text-field
         v-if="usuario"
@@ -116,6 +128,7 @@ import TarjetaLogin from "./components/TarjetaLogin.vue";
 const usuario = ref(JSON.parse(localStorage.getItem("user") || "null"));
 const drawerAbierto = ref(true);
 const mini = ref(false);
+const logoOk = ref(true);
 
 function alLoguear(datos) {
   localStorage.setItem("token", datos.token);

@@ -9,10 +9,11 @@
     "preview": "vite preview --port 5173"
   },
   "dependencies": {
+    "sweetalert2": "^11.23.0",
     "vibe-turnos": "file:..",
     "vue": "^2.7.16",
-    "vuetify": "^2.7.1",
-    "vue-router": "^3.6.5"
+    "vue-router": "^3.6.5",
+    "vuetify": "^2.7.1"
   },
   "devDependencies": {
     "@vitejs/plugin-vue2": "^2.3.3",

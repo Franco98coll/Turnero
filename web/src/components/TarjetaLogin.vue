@@ -17,9 +17,11 @@
 <script setup>
 import { ref } from "vue";
 import { useApi } from "../composables/useApi";
+import { useNotify } from "../composables/useNotify";
 
 const emit = defineEmits(["logueado"]);
 const { iniciarSesion } = useApi();
+const { toast } = useNotify();
 
 const correoElectronico = ref("");
 const contrasena = ref("");
@@ -34,7 +36,7 @@ async function hacerLogin() {
     );
     emit("logueado", respuesta);
   } catch (e) {
-    alert(e && e.message ? e.message : "Login inválido");
+    toast(e && e.message ? String(e.message) : "Login inválido", "error");
   } finally {
     cargando.value = false;
   }

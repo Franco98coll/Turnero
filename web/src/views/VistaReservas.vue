@@ -48,8 +48,10 @@
 import { ref, computed } from "vue";
 import { useApi } from "../composables/useApi";
 import { formatearFechaHora } from "../composables/useFecha";
+import { useNotify } from "../composables/useNotify";
 
 const { obtenerReservas, cancelarReserva } = useApi();
+const { confirmAction, toast } = useNotify();
 
 const reservas = ref([]);
 const cargando = ref(false);
@@ -87,10 +89,17 @@ async function cargar() {
 }
 
 async function cancelar(item) {
-  if (!confirm("¿Cancelar esta reserva?")) return;
+  const ok = await confirmAction({
+    title: "Cancelar reserva",
+    text: "¿Seguro que querés cancelar esta reserva?",
+    icon: "warning",
+    confirmButtonText: "Cancelar",
+  });
+  if (!ok) return;
   cancelandoId.value = item.id;
   try {
     await cancelarReserva(item.id);
+    toast("Reserva cancelada", "success");
     await cargar();
   } finally {
     cancelandoId.value = null;
