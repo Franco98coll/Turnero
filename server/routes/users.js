@@ -92,8 +92,6 @@ router.delete("/:id", auth("admin"), async (req, res) => {
   }
 });
 
-module.exports = router;
-
 // --- Pagos ---
 // Helpers
 async function ensurePaymentsTable(pool) {
@@ -149,6 +147,8 @@ router.get("/payments", auth("admin"), async (req, res) => {
     res.status(500).json({ error: "Error de servidor" });
   }
 });
+
+module.exports = router;
 
 // POST /api/users/:id/pay { year, month, paid }
 router.post("/:id/pay", auth("admin"), async (req, res) => {

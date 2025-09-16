@@ -137,6 +137,15 @@ async function cargar() {
     deadline.value = deadlineRes?.deadline
       ? String(deadlineRes.deadline).slice(0, 10)
       : "";
+  } catch (e) {
+    const msg =
+      e && e.message ? e.message : "No se pudo cargar la información de pagos";
+    alert(
+      msg +
+        "\nVerificá que el backend tenga los endpoints /api/users/payments y /api/users/payments/deadline."
+    );
+    filas.value = [];
+    deadline.value = "";
   } finally {
     cargando.value = false;
   }
