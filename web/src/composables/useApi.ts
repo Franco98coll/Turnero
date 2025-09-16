@@ -33,7 +33,14 @@ export function useApi() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
     });
-    if (!respuesta.ok) throw new Error("Login failed");
+    if (!respuesta.ok) {
+      let detalle = "Login failed";
+      try {
+        const cuerpoErr = await respuesta.json();
+        detalle = cuerpoErr?.error || detalle;
+      } catch {}
+      throw new Error(detalle);
+    }
     const cuerpo = await respuesta.json();
     tokenActual = cuerpo.token || tokenActual;
     return cuerpo;

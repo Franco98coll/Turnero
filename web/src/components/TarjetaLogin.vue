@@ -34,7 +34,7 @@ async function hacerLogin() {
     );
     emit("logueado", respuesta);
   } catch (e) {
-    alert("Login inválido");
+    alert(e && e.message ? e.message : "Login inválido");
   } finally {
     cargando.value = false;
   }
