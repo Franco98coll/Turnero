@@ -98,8 +98,6 @@ router.delete("/", auth("admin"), async (req, res) => {
   }
 });
 
-module.exports = router;
-
 // GET /api/slots/:id/attendees (admin)
 router.get("/:id/attendees", auth("admin"), async (req, res) => {
   try {
@@ -110,7 +108,7 @@ router.get("/:id/attendees", auth("admin"), async (req, res) => {
         SELECT b.id as booking_id, u.id as user_id, u.name, u.email
         FROM bookings b
         JOIN users u ON u.id = b.user_id
-        WHERE b.slot_id = @id AND b.status='confirmed'
+        WHERE b.slot_id = @id AND b.status <> 'canceled'
         ORDER BY u.name ASC
       `);
     res.json(result.recordset);
@@ -251,3 +249,5 @@ router.post("/bulk", auth("admin"), async (req, res) => {
     res.status(500).json({ error: "Error de servidor" });
   }
 });
+
+module.exports = router;
