@@ -22,6 +22,11 @@
       <template v-slot:[`item.fin`]="{ item }">{{
         formatearFechaHora(item.end_time)
       }}</template>
+      <template v-slot:[`item.inscriptos`]="{ item }">
+        {{ (item.capacity || 0) - (item.remaining || 0) }}/{{
+          item.capacity || 0
+        }}
+      </template>
       <template v-slot:[`item.acciones`]="{ item }">
         <v-btn small @click="verAsistentes(item)">Asistentes</v-btn>
       </template>
@@ -73,6 +78,7 @@ const asistentes = ref([]);
 const encabezados = [
   { text: "Inicio", value: "inicio" },
   { text: "Fin", value: "fin" },
+  { text: "Inscriptos", value: "inscriptos" },
   { text: "Acciones", value: "acciones", sortable: false, align: "end" },
 ];
 
